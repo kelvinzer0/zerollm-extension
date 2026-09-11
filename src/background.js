@@ -1,13 +1,13 @@
 /**
  * ZeroLLM Multi-Tab Router & Background Service Worker
  * 
- * Solves:
- * 1. Multiple tabs orchestration: Maintains a mapping of Model -> TabID,
- *    so multiple models (e.g. ChatGPT, ChatSmith, Claude) can run in parallel
- *    across different tabs simultaneously without interference!
- * 2. Connects to LLM Bridge via WebSocket.
- * 3. Handles registration of dynamic models from user configurations.
- * 4. Routes incoming completionRequest/responsesRequest to the appropriate tab.
+ * Fitur Utama:
+ * 1. AUTO-OPEN & AUTO-INJECT:
+ *    - Jika tab belum ada: otomatis membuka tab baru di background.
+ *    - Jika extension di-reload: otomatis menyambung ulang content script ke tab yang sudah ada
+ *      tanpa perlu refresh tab manual!
+ * 2. Multi-tab parallel orchestration: Map<modelId, tabId>.
+ * 3. Integrasi Cloudflare Worker Bridge via WebSocket.
  */
 
 import { DEFAULT_PRESETS } from "./presets.js";
@@ -23,7 +23,7 @@ let reconnectTimer = null;
 let models = [];
 // Active Model -> Tab ID mapping: Map<modelId, tabId>
 const modelTabMap = new Map();
-// Model Queue: Map<modelId, Array<pendingRequest>> to queue requests per tab
+// Model Queue: Map<modelId, Array<pendingRequest>>
 const modelQueues = new Map();
 const isProcessingTab = new Map();
 
@@ -46,12 +46,55 @@ async function loadModels() {
 }
 
 // ============================================================
-//  MULTI-TAB RESOLUTION & ORCHESTRATION
+//  AUTO RE-ATTACH ON EXTENSION RELOAD
 // ============================================================
 
 /**
- * Convert a pattern like *://chatgpt.com/* into a RegExp
+ * Otomatis inject content script ke semua tab yang cocok dengan model aktif
+ * ketika extension baru saja di-reload. Mencegah user harus refresh tab manual!
  */
+async function autoAttachExistingTabs() {
+  try {
+    const allTabs = await chrome.tabs.query({});
+    for (const model of models) {
+      if (model.enabled === false) continue;
+      const patternRegex = wildcardToRegExp(model.urlPattern);
+      const matchingTab = allTabs.find(t => t.url && patternRegex.test(t.url));
+      if (matchingTab) {
+        modelTabMap.set(model.id, matchingTab.id);
+        console.log(`[ZeroLLM] Auto-reattaching tab #${matchingTab.id} for model ${model.id}`);
+        await injectContentScriptSilently(matchingTab.id);
+      }
+    }
+  } catch (err) {
+    console.warn("[ZeroLLM] autoAttachExistingTabs warning:", err.message);
+  }
+}
+
+async function injectContentScriptSilently(tabId) {
+  try {
+    const res = await chrome.tabs.sendMessage(tabId, { type: "ping" });
+    if (res && res.pong) return true;
+  } catch (e) {
+    // Ping gagal (karena extension baru di-reload), reinject otomatis
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ["src/content.js"]
+      });
+      return true;
+    } catch (scriptErr) {
+      // Tab mungkin privileged atau sedang loading
+      return false;
+    }
+  }
+  return false;
+}
+
+// ============================================================
+//  MULTI-TAB RESOLUTION & AUTO-OPEN
+// ============================================================
+
 function wildcardToRegExp(pattern) {
   const escaped = pattern
     .replace(/[.+^${}()|[\]\\]/g, "\\$&")
@@ -61,13 +104,13 @@ function wildcardToRegExp(pattern) {
 }
 
 /**
- * Find or open a suitable tab for a given model
+ * Mencari tab yang cocok atau OTOMATIS MEMBUKA TAB BARU jika belum terbuka
  */
 async function getTabForModel(modelConfig) {
   const patternRegex = wildcardToRegExp(modelConfig.urlPattern);
   const allTabs = await chrome.tabs.query({});
 
-  // 1. Check if we already have an assigned tab that is still valid
+  // 1. Cek tab yang sudah dipetakan sebelumnya
   const existingTabId = modelTabMap.get(modelConfig.id);
   if (existingTabId) {
     const tab = allTabs.find(t => t.id === existingTabId);
@@ -76,28 +119,27 @@ async function getTabForModel(modelConfig) {
     }
   }
 
-  // 2. Find any open tab matching the model's urlPattern
+  // 2. Cari tab yang sedang terbuka dan cocok dengan URL pattern
   const matchingTab = allTabs.find(t => t.url && patternRegex.test(t.url));
   if (matchingTab) {
     modelTabMap.set(modelConfig.id, matchingTab.id);
     return matchingTab;
   }
 
-  // 3. If active tab matches or fallback
-  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (activeTab && activeTab.url && patternRegex.test(activeTab.url)) {
-    modelTabMap.set(modelConfig.id, activeTab.id);
-    return activeTab;
+  // 3. Jika belum terbuka sama sekali -> OTOMATIS BUKA TAB BARU DI BACKGROUND
+  console.log(`[ZeroLLM] No tab open for ${modelConfig.id}. Opening target URL automatically...`);
+  let targetUrl = modelConfig.urlPattern.replace(/\*/g, "");
+  if (!targetUrl.startsWith("http")) {
+    targetUrl = "https://" + targetUrl.replace(/^\/+/, "");
   }
 
-  // 4. Open a new tab if none found
-  let targetUrl = modelConfig.urlPattern.replace(/\*/g, "");
-  if (!targetUrl.startsWith("http")) targetUrl = "https://" + targetUrl.replace(/^\/+/, "");
-
-  const newTab = await chrome.tabs.create({ url: targetUrl, active: false });
+  const newTab = await chrome.tabs.create({
+    url: targetUrl,
+    active: false // Buka di background agar tidak mengganggu fokus pengguna
+  });
   modelTabMap.set(modelConfig.id, newTab.id);
 
-  // Wait for the new tab to load
+  // Tunggu tab selesai dimuat (max 10 detik)
   await new Promise(resolve => {
     const listener = (tabId, info) => {
       if (tabId === newTab.id && info.status === "complete") {
@@ -106,30 +148,20 @@ async function getTabForModel(modelConfig) {
       }
     };
     chrome.tabs.onUpdated.addListener(listener);
-    setTimeout(resolve, 8000); // 8s fallback
+    setTimeout(resolve, 10000);
   });
 
   return newTab;
 }
 
 /**
- * Ensure content script is running in the target tab
+ * Memastikan content script siap merespon perintah
  */
 async function ensureContentScript(tabId) {
-  try {
-    const res = await chrome.tabs.sendMessage(tabId, { type: "ping" });
-    if (res && res.pong) return;
-  } catch (e) {
-    // Ping failed, inject content.js dynamically
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId },
-        files: ["src/content.js"]
-      });
-      await new Promise(r => setTimeout(r, 300));
-    } catch (scriptErr) {
-      console.warn("[ZeroLLM] Could not executeScript:", scriptErr.message);
-    }
+  const isReady = await injectContentScriptSilently(tabId);
+  if (!isReady) {
+    await new Promise(r => setTimeout(r, 500));
+    await injectContentScriptSilently(tabId);
   }
 }
 
@@ -161,7 +193,7 @@ function connectBridge(url, room, key) {
       clearTimeout(reconnectTimer);
       chrome.storage.local.set({ bridgeUrl: url, roomId: room, apiKey });
 
-      // Register all enabled models with Cloudflare Worker
+      // Sinkronisasi model ke Cloudflare Worker
       syncModelsToBridge();
     };
 
@@ -248,7 +280,6 @@ async function handleBridgeMessage(msg) {
       return;
     }
 
-    // Extract query text
     let query = "";
     if (req.messages && Array.isArray(req.messages)) {
       const lastUser = [...req.messages].reverse().find(m => m.role === "user");
@@ -280,15 +311,16 @@ async function processModelQueue(modelId) {
   const task = queue.shift();
 
   try {
-    // 1. Resolve tab for this specific model (multi-tab support)
+    // 1. Dapatkan atau buka tab otomatis
     const tab = await getTabForModel(task.modelConfig);
     if (!tab) {
-      throw new Error(`Tab for model '${modelId}' (${task.modelConfig.urlPattern}) not found. Please open the chat page tab.`);
+      throw new Error(`Could not find or open tab for model '${modelId}' (${task.modelConfig.urlPattern})`);
     }
 
+    // 2. Sambungkan kembali content script jika baru di-reload
     await ensureContentScript(tab.id);
 
-    // 2. Dispatch prompt to the tab
+    // 3. Kirim query ke tab untuk diproses
     await chrome.tabs.sendMessage(tab.id, {
       type: "executePrompt",
       requestId: task.requestId,
@@ -317,7 +349,6 @@ async function processModelQueue(modelId) {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   switch (msg.type) {
-    // Forwarded from content script to Cloudflare Worker
     case "stream":
       sendToBridge({ type: "stream", requestId: msg.requestId, delta: msg.delta });
       break;
@@ -328,7 +359,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendToBridge({ type: "streamError", requestId: msg.requestId, error: msg.error });
       break;
 
-    // Popup management
     case "getState":
       sendResponse({
         connectionState,
@@ -371,8 +401,9 @@ function broadcastState() {
   }).catch(() => {});
 }
 
-// Auto-start on load
-loadModels().then(() => {
+// Auto-start on load & Auto-attach tabs
+loadModels().then(async () => {
+  await autoAttachExistingTabs();
   if (bridgeUrl && roomId) {
     connectBridge(bridgeUrl, roomId, apiKey);
   }
