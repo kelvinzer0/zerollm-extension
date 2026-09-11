@@ -1,0 +1,142 @@
+name: Release Extension
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Release Extension
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine Next Version from Commit Messages
+        id: versioning
+        run: |
+          # Ambil tag terakhir atau fallback 1.0.0
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v1.0.0")
+          RAW_VER=${LATEST_TAG#v}
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$RAW_VER"
+          MAJOR=${MAJOR:-1}
+          MINOR=${MINOR:-0}
+          PATCH=${PATCH:-0}
+
+          # Dapatkan commit terakhir
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          echo "Commit message: $COMMIT_MSG"
+
+          if echo "$COMMIT_MSG" | grep -iqE "breaking|major:"; then
+            MAJOR=$((MAJOR + 1))
+            MINOR=0
+            PATCH=0
+          elif echo "$COMMIT_MSG" | grep -iqE "feat|feature:"; then
+            MINOR=$((MINOR + 1))
+            PATCH=0
+          else
+            PATCH=$((PATCH + 1))
+          fi
+
+          NEW_TAG="v$MAJOR.$MINOR.$PATCH"
+          NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+          echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
+          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "New calculated version: $NEW_TAG"
+
+      - name: Update Version in manifest.json
+        run: |
+          VERSION="${{ steps.versioning.outputs.version }}"
+          # Update version field in manifest.json using node
+          node -e "
+            const fs = require('fs');
+            const m = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
+            m.version = '$VERSION';
+            fs.writeFileSync('manifest.json', JSON.stringify(m, null, 2));
+          "
+
+      - name: Package Extension ZIP
+        run: |
+          ZIP_NAME="zerollm-extension-${{ steps.versioning.outputs.tag }}.zip"
+          zip -r "$ZIP_NAME" \
+            manifest.json \
+            icons/ \
+            lib/ \
+            src/ \
+            README.md \
+            -x "*.git*"
+          echo "zip_name=$ZIP_NAME" >> $GITHUB_OUTPUT
+        id: package
+
+      - name: Create GitHub Release with User Guide
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.versioning.outputs.tag }}
+          name: "Release ${{ steps.versioning.outputs.tag }} 🚀"
+          files: ${{ steps.package.outputs.zip_name }}
+          body: |
+            # ⚡ ZeroLLM Extension ${{ steps.versioning.outputs.tag }}
+
+            Universal Web-to-LLM Chrome Extension. Mengubah website chatbot AI apa pun (**ChatGPT, ChatSmith, Claude, Gemini**, dll.) menjadi endpoint LLM yang **100% kompatibel dengan OpenAI API standard** (`/v1/chat/completions`).
+
+            ---
+
+            ## 📦 Cara Download & Pasang di Chrome
+
+            1. **Unduh Berkas ZIP**:
+               - Download file **`${{ steps.package.outputs.zip_name }}`** yang ada di bagian *Assets* di bawah ini.
+            2. **Ekstrak ZIP**:
+               - Ekstrak berkas zip tersebut ke folder lokal komputer Anda (misal `zerollm-extension`).
+            3. **Pasang di Google Chrome / Edge / Brave**:
+               - Buka browser dan ketik `chrome://extensions/` di address bar.
+               - Aktifkan toggle **Developer mode** di pojok kanan atas.
+               - Klik tombol **Load unpacked** (Muat yang belum dibongkar) di pojok kiri atas.
+               - Pilih folder hasil ekstrak tadi.
+               - Selesai! Ikon ZeroLLM akan muncul di toolbar ekstensi browser Anda.
+
+            ---
+
+            ## 🚀 Panduan Penggunaan Singkat
+
+            1. **Buka Popup ZeroLLM**:
+               - Klik ikon ekstensi ZeroLLM di browser.
+               - Masuk ke tab **⚡ Cloudflare Bridge**.
+               - Klik tombol **🚀 Create New Room**.
+               - Salin **API Key** yang muncul (format: `<token>_<roomId>`).
+            2. **Buka Tab Chatbot AI**:
+               - Buka tab `chatgpt.com` atau `chatsmith.io` (atau provider web AI lainnya).
+               - Pastikan tab tetap terbuka dalam browser Anda.
+            3. **Gunakan pada Aplikasi / Script OpenAI Anda**:
+               - Masukkan Base URL: `https://llm-bridge.insidexofficial.workers.dev/v1`
+               - Masukkan API Key dari langkah 1.
+               - Masukkan model sesuai tab: `chatgpt` atau `chatsmith`.
+
+            ```python
+            from openai import OpenAI
+
+            client = OpenAI(
+                base_url="https://llm-bridge.insidexofficial.workers.dev/v1",
+                api_key="PASTE_API_KEY_ANDA"
+            )
+
+            # Chat Completion via Web ChatGPT/ChatSmith
+            response = client.chat.completions.create(
+                model="chatgpt",
+                messages=[{"role": "user", "content": "Jelaskan konsep komputasi kuantum secara singkat"}]
+            )
+            print(response.choices[0].message.content)
+            ```
+
+            ---
+
+            ## 📝 Catatan Rilis
+            - **Commit**: `${{ github.event.head_commit.message }}`
+            - **Author**: `${{ github.actor }}`
+            - **Live Bridge Gateway**: `https://llm-bridge.insidexofficial.workers.dev`
