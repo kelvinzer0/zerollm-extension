@@ -71,19 +71,26 @@ async function getTabForModel(modelConfig) {
   const existingTabId = modelTabMap.get(modelConfig.id);
   if (existingTabId) {
     const tab = allTabs.find(t => t.id === existingTabId);
-    if (tab && patternRegex.test(tab.url)) {
+    if (tab && tab.url && patternRegex.test(tab.url)) {
       return tab;
     }
   }
 
   // 2. Find any open tab matching the model's urlPattern
-  const matchingTab = allTabs.find(t => patternRegex.test(t.url));
+  const matchingTab = allTabs.find(t => t.url && patternRegex.test(t.url));
   if (matchingTab) {
     modelTabMap.set(modelConfig.id, matchingTab.id);
     return matchingTab;
   }
 
-  // 3. If no matching tab is open, open a new tab with the target URL
+  // 3. If active tab matches or fallback
+  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (activeTab && activeTab.url && patternRegex.test(activeTab.url)) {
+    modelTabMap.set(modelConfig.id, activeTab.id);
+    return activeTab;
+  }
+
+  // 4. Open a new tab if none found
   let targetUrl = modelConfig.urlPattern.replace(/\*/g, "");
   if (!targetUrl.startsWith("http")) targetUrl = "https://" + targetUrl.replace(/^\/+/, "");
 
@@ -99,26 +106,30 @@ async function getTabForModel(modelConfig) {
       }
     };
     chrome.tabs.onUpdated.addListener(listener);
-    setTimeout(resolve, 10000); // 10s fallback
+    setTimeout(resolve, 8000); // 8s fallback
   });
 
   return newTab;
 }
 
 /**
- * Ensure content script is injected into the target tab
+ * Ensure content script is running in the target tab
  */
 async function ensureContentScript(tabId) {
   try {
     const res = await chrome.tabs.sendMessage(tabId, { type: "ping" });
     if (res && res.pong) return;
   } catch (e) {
-    // Inject content.js if not yet injected
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ["src/content.js"]
-    });
-    await new Promise(r => setTimeout(r, 200));
+    // Ping failed, inject content.js dynamically
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ["src/content.js"]
+      });
+      await new Promise(r => setTimeout(r, 300));
+    } catch (scriptErr) {
+      console.warn("[ZeroLLM] Could not executeScript:", scriptErr.message);
+    }
   }
 }
 
@@ -246,8 +257,6 @@ async function handleBridgeMessage(msg) {
       query = req.input;
     }
 
-    // Enqueue request per-model so a single model tab processes sequentially,
-    // while DIFFERENT models process in PARALLEL in their respective tabs!
     if (!modelQueues.has(modelId)) {
       modelQueues.set(modelId, []);
     }
@@ -274,7 +283,7 @@ async function processModelQueue(modelId) {
     // 1. Resolve tab for this specific model (multi-tab support)
     const tab = await getTabForModel(task.modelConfig);
     if (!tab) {
-      throw new Error(`Could not find or open tab for model '${modelId}' (${task.modelConfig.urlPattern})`);
+      throw new Error(`Tab for model '${modelId}' (${task.modelConfig.urlPattern}) not found. Please open the chat page tab.`);
     }
 
     await ensureContentScript(tab.id);
@@ -288,6 +297,7 @@ async function processModelQueue(modelId) {
       stream: task.stream
     });
   } catch (err) {
+    console.error("[ZeroLLM] processModelQueue error:", err);
     sendToBridge({
       type: "streamError",
       requestId: task.requestId,
@@ -295,7 +305,6 @@ async function processModelQueue(modelId) {
     });
   } finally {
     isProcessingTab.set(modelId, false);
-    // Process next item in queue for this model
     if (queue && queue.length > 0) {
       processModelQueue(modelId);
     }
