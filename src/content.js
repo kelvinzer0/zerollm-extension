@@ -7,6 +7,8 @@
 
 // Simple in-script HTML to Markdown conversion (self-contained)
 function cleanHtmlToMarkdown(elementOrHtml) {
+  if (!elementOrHtml) return "";
+
   let doc;
   if (typeof elementOrHtml === "string") {
     const parser = new DOMParser();
@@ -14,7 +16,7 @@ function cleanHtmlToMarkdown(elementOrHtml) {
   } else if (elementOrHtml instanceof Element) {
     doc = elementOrHtml;
   } else {
-    return String(elementOrHtml || "");
+    return String(elementOrHtml || "").trim();
   }
 
   function walk(node) {
@@ -49,9 +51,11 @@ function cleanHtmlToMarkdown(elementOrHtml) {
         }
         return `\`${inner}\``;
       case "pre": {
+        const trimmedInner = inner.trim();
+        if (!trimmedInner) return ""; // Jangan return ``` kosong jika pre belum berisi teks
         const lang = node.getAttribute("data-language") || 
                      node.className.match(/language-([a-zA-Z0-9_-]+)/)?.[1] || "";
-        return `\n\n\`\`\`${lang}\n${inner.trim()}\n\`\`\`\n\n`;
+        return `\n\n\`\`\`${lang}\n${trimmedInner}\n\`\`\`\n\n`;
       }
       case "blockquote": return `\n\n> ${inner.trim().split("\n").join("\n> ")}\n\n`;
       case "ul": return `\n\n${inner.trim()}\n\n`;
@@ -63,7 +67,13 @@ function cleanHtmlToMarkdown(elementOrHtml) {
     }
   }
 
-  return walk(doc.body || doc).replace(/\n{3,}/g, "\n\n").trim();
+  const parsed = walk(doc.body || doc).replace(/\n{3,}/g, "\n\n").trim();
+  // Fallback ke innerText jika markdown hasil parsing kosong
+  if (!parsed && (elementOrHtml instanceof Element || (doc && doc.body))) {
+    const rawText = (doc.body || elementOrHtml).innerText || "";
+    return rawText.trim();
+  }
+  return parsed;
 }
 
 /**
@@ -77,9 +87,7 @@ function findElementByPattern(selectorOrRegex) {
   try {
     const el = document.querySelector(selectorOrRegex);
     if (el) return el;
-  } catch (e) {
-    // Might be regex string or custom pattern
-  }
+  } catch (e) {}
 
   // 2. Check if formatted as regex /pattern/flags
   let regex = null;
@@ -87,12 +95,10 @@ function findElementByPattern(selectorOrRegex) {
   if (match) {
     try { regex = new RegExp(match[1], match[2]); } catch (e) {}
   } else {
-    // Plain string regex
     try { regex = new RegExp(selectorOrRegex, "i"); } catch (e) {}
   }
 
   if (regex) {
-    // Search elements by ID, class name, placeholder, aria-label, or text
     const candidates = document.querySelectorAll("textarea, input, [contenteditable='true'], button, div, article");
     for (const c of candidates) {
       const textToTest = [
@@ -112,23 +118,33 @@ function findElementByPattern(selectorOrRegex) {
 /**
  * Find all matching assistant response containers
  */
-function getResponseContainers(config) {
-  const selector = config.resultContainerSelector || config.doneSelector || ".markdown, article";
-  try {
-    const list = document.querySelectorAll(selector);
-    if (list.length > 0) return Array.from(list);
-  } catch (e) {}
+function getResponseContainers(modelConfig) {
+  const selectors = [
+    modelConfig.resultContainerSelector,
+    "[data-message-author-role='assistant']",
+    ".markdown",
+    "article",
+    ".message-ai",
+    ".chat-bubble-bot",
+    "message-content"
+  ].filter(Boolean);
+
+  for (const sel of selectors) {
+    try {
+      const list = document.querySelectorAll(sel);
+      if (list.length > 0) return Array.from(list);
+    } catch (e) {}
+  }
   return [];
 }
 
 /**
  * Check if the page is currently streaming
  */
-function checkIsStreaming(config) {
-  if (!config.streamSelector) return false;
-  const el = findElementByPattern(config.streamSelector);
+function checkIsStreaming(modelConfig) {
+  if (!modelConfig.streamSelector) return false;
+  const el = findElementByPattern(modelConfig.streamSelector);
   if (el) {
-    // Check if element is visible
     return el.offsetParent !== null || window.getComputedStyle(el).display !== "none";
   }
   return false;
@@ -141,28 +157,31 @@ async function enterPrompt(inputEl, text) {
   inputEl.focus();
 
   if (inputEl.isContentEditable) {
-    inputEl.textContent = text;
+    // ContentEditable (ProseMirror / Lexical)
+    inputEl.innerHTML = `<p>${text}</p>`;
     inputEl.dispatchEvent(new Event("input", { bubbles: true }));
     inputEl.dispatchEvent(new Event("change", { bubbles: true }));
   } else if ("value" in inputEl) {
+    // Standard Textarea / Input
     inputEl.value = text;
     inputEl.dispatchEvent(new Event("input", { bubbles: true }));
     inputEl.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
-  await new Promise(r => setTimeout(r, 200));
+  await new Promise(r => setTimeout(r, 300));
 
-  // Trigger Enter or find submit button
+  // Find and click submit button
   const form = inputEl.closest("form");
   const submitBtn = form ? form.querySelector("button[type='submit']") : 
-                   document.querySelector("button[data-testid='send-button'], button[aria-label*='Send']");
+                   document.querySelector("button[data-testid='send-button'], button[data-testid='fruitjuice-send-button'], button[aria-label*='Send'], button[aria-label*='Kirim']");
 
-  if (submitBtn) {
+  if (submitBtn && !submitBtn.disabled) {
     submitBtn.click();
   } else {
-    inputEl.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true }));
-    inputEl.dispatchEvent(new KeyboardEvent("keypress", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true }));
-    inputEl.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true }));
+    // Enter keyboard event fallback
+    inputEl.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
+    inputEl.dispatchEvent(new KeyboardEvent("keypress", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
+    inputEl.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
   }
 }
 
@@ -175,7 +194,7 @@ async function executeTabCompletion(requestId, modelConfig, query, streamMode) {
   // 1. Find Chat Input Box
   const inputEl = findElementByPattern(modelConfig.continueChatSelector) || 
                   findElementByPattern(modelConfig.startChatSelector) ||
-                  document.querySelector("textarea, [contenteditable='true']");
+                  document.querySelector("#prompt-textarea, textarea, [contenteditable='true']");
 
   if (!inputEl) {
     throw new Error(`Chat input area not found for model ${modelConfig.id}. Check selector: ${modelConfig.startChatSelector}`);
@@ -192,7 +211,6 @@ async function executeTabCompletion(requestId, modelConfig, query, streamMode) {
   return new Promise((resolve, reject) => {
     let lastMarkdown = "";
     let streamStarted = false;
-    let streamEnded = false;
     let pollCount = 0;
     const maxPolls = 180; // 90 seconds timeout (500ms intervals)
 
@@ -201,9 +219,12 @@ async function executeTabCompletion(requestId, modelConfig, query, streamMode) {
       const currentContainers = getResponseContainers(modelConfig);
       
       // Target the latest response
-      const latestResponseEl = currentContainers.length > initialCount ? 
-                               currentContainers[currentContainers.length - 1] : 
-                               currentContainers[currentContainers.length - 1];
+      let latestResponseEl = null;
+      if (currentContainers.length > initialCount) {
+        latestResponseEl = currentContainers[currentContainers.length - 1];
+      } else if (currentContainers.length > 0) {
+        latestResponseEl = currentContainers[currentContainers.length - 1];
+      }
 
       let rawHtml = "";
       if (latestResponseEl) {
@@ -213,7 +234,10 @@ async function executeTabCompletion(requestId, modelConfig, query, streamMode) {
       const isStreaming = checkIsStreaming(modelConfig);
       const markdown = cleanHtmlToMarkdown(rawHtml || latestResponseEl || "");
 
-      if (markdown && markdown !== lastMarkdown) {
+      // Hanya anggap respons valid jika ada teks bermakna (bukan hanya string kosong atau ```)
+      const hasMeaningfulText = markdown.replace(/[`\s]/g, "").length > 0;
+
+      if (hasMeaningfulText && markdown !== lastMarkdown) {
         const delta = markdown.startsWith(lastMarkdown) ? 
                       markdown.slice(lastMarkdown.length) : 
                       markdown;
@@ -231,8 +255,8 @@ async function executeTabCompletion(requestId, modelConfig, query, streamMode) {
       }
 
       // Check if finished streaming:
-      // Either isStreaming switched to false, or doneSelector is matched and content is settled
-      if (streamStarted && !isStreaming && pollCount > 3) {
+      // Hanya selesai jika stream sudah menghasilkan teks DAN status isStreaming mati DAN sudah lewat beberapa polling
+      if (streamStarted && hasMeaningfulText && !isStreaming && pollCount > 4) {
         clearInterval(interval);
         resolve(lastMarkdown);
         return;
@@ -241,7 +265,7 @@ async function executeTabCompletion(requestId, modelConfig, query, streamMode) {
       // Safety timeout
       if (pollCount >= maxPolls) {
         clearInterval(interval);
-        if (lastMarkdown) {
+        if (lastMarkdown && hasMeaningfulText) {
           resolve(lastMarkdown);
         } else {
           reject(new Error("Timeout waiting for AI response from page DOM"));
