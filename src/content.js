@@ -52,7 +52,7 @@ function cleanHtmlToMarkdown(elementOrHtml) {
         return `\`${inner}\``;
       case "pre": {
         const trimmedInner = inner.trim();
-        if (!trimmedInner) return ""; // Jangan return ``` kosong jika pre belum berisi teks
+        if (!trimmedInner) return "";
         const lang = node.getAttribute("data-language") || 
                      node.className.match(/language-([a-zA-Z0-9_-]+)/)?.[1] || "";
         return `\n\n\`\`\`${lang}\n${trimmedInner}\n\`\`\`\n\n`;
@@ -68,7 +68,6 @@ function cleanHtmlToMarkdown(elementOrHtml) {
   }
 
   const parsed = walk(doc.body || doc).replace(/\n{3,}/g, "\n\n").trim();
-  // Fallback ke innerText jika markdown hasil parsing kosong
   if (!parsed && (elementOrHtml instanceof Element || (doc && doc.body))) {
     const rawText = (doc.body || elementOrHtml).innerText || "";
     return rawText.trim();
@@ -151,24 +150,41 @@ function checkIsStreaming(modelConfig) {
 }
 
 /**
- * Enter prompt text into input element
+ * Enter prompt text into input element using native DOM setters and input events
+ * Handles React/Vue/ProseMirror input state listeners
  */
 async function enterPrompt(inputEl, text) {
   inputEl.focus();
 
   if (inputEl.isContentEditable) {
-    // ContentEditable (ProseMirror / Lexical)
-    inputEl.innerHTML = `<p>${text}</p>`;
+    // ContentEditable (ChatGPT ProseMirror / Lexical)
+    inputEl.focus();
+    // Select all existing content
+    document.execCommand("selectAll", false, null);
+    // Insert text so React synthetic events update properly
+    const success = document.execCommand("insertText", false, text);
+    if (!success) {
+      inputEl.innerHTML = `<p>${text}</p>`;
+    }
     inputEl.dispatchEvent(new Event("input", { bubbles: true }));
     inputEl.dispatchEvent(new Event("change", { bubbles: true }));
-  } else if ("value" in inputEl) {
-    // Standard Textarea / Input
-    inputEl.value = text;
+  } else {
+    // Standard Textarea / Input with native value setter
+    const nativeSetter = Object.getOwnPropertyDescriptor(
+      inputEl instanceof HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype,
+      "value"
+    )?.set;
+
+    if (nativeSetter) {
+      nativeSetter.call(inputEl, text);
+    } else {
+      inputEl.value = text;
+    }
     inputEl.dispatchEvent(new Event("input", { bubbles: true }));
     inputEl.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
-  await new Promise(r => setTimeout(r, 300));
+  await new Promise(r => setTimeout(r, 400));
 
   // Find and click submit button
   const form = inputEl.closest("form");
@@ -178,10 +194,11 @@ async function enterPrompt(inputEl, text) {
   if (submitBtn && !submitBtn.disabled) {
     submitBtn.click();
   } else {
-    // Enter keyboard event fallback
-    inputEl.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
-    inputEl.dispatchEvent(new KeyboardEvent("keypress", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
-    inputEl.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
+    // Keyboard Enter fallback with full event pipeline
+    const enterOpts = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true };
+    inputEl.dispatchEvent(new KeyboardEvent("keydown", enterOpts));
+    inputEl.dispatchEvent(new KeyboardEvent("keypress", enterOpts));
+    inputEl.dispatchEvent(new KeyboardEvent("keyup", enterOpts));
   }
 }
 
@@ -197,7 +214,7 @@ async function executeTabCompletion(requestId, modelConfig, query, streamMode) {
                   document.querySelector("#prompt-textarea, textarea, [contenteditable='true']");
 
   if (!inputEl) {
-    throw new Error(`Chat input area not found for model ${modelConfig.id}. Check selector: ${modelConfig.startChatSelector}`);
+    throw new Error(`Chat input area not found for model ${modelConfig.id}. Please ensure the chat page is loaded.`);
   }
 
   // Count existing assistant messages to target newly created response
@@ -207,12 +224,12 @@ async function executeTabCompletion(requestId, modelConfig, query, streamMode) {
   // 2. Submit prompt
   await enterPrompt(inputEl, query);
 
-  // 3. Monitor DOM response with MutationObserver & Polling
+  // 3. Monitor DOM response with Polling
   return new Promise((resolve, reject) => {
     let lastMarkdown = "";
     let streamStarted = false;
     let pollCount = 0;
-    const maxPolls = 180; // 90 seconds timeout (500ms intervals)
+    const maxPolls = 120; // 60 seconds max
 
     const interval = setInterval(() => {
       pollCount++;
@@ -234,7 +251,7 @@ async function executeTabCompletion(requestId, modelConfig, query, streamMode) {
       const isStreaming = checkIsStreaming(modelConfig);
       const markdown = cleanHtmlToMarkdown(rawHtml || latestResponseEl || "");
 
-      // Hanya anggap respons valid jika ada teks bermakna (bukan hanya string kosong atau ```)
+      // Validate meaningful text
       const hasMeaningfulText = markdown.replace(/[`\s]/g, "").length > 0;
 
       if (hasMeaningfulText && markdown !== lastMarkdown) {
@@ -254,9 +271,8 @@ async function executeTabCompletion(requestId, modelConfig, query, streamMode) {
         }
       }
 
-      // Check if finished streaming:
-      // Hanya selesai jika stream sudah menghasilkan teks DAN status isStreaming mati DAN sudah lewat beberapa polling
-      if (streamStarted && hasMeaningfulText && !isStreaming && pollCount > 4) {
+      // Selesai jika stream sudah dimulai, ada teks jawaban, dan isStreaming sudah bernilai false
+      if (streamStarted && hasMeaningfulText && !isStreaming && pollCount > 3) {
         clearInterval(interval);
         resolve(lastMarkdown);
         return;
