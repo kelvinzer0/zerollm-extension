@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ZeroLLM — Universal Web-to-LLM Bridge</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #121826;
+      --border: #232c3d;
+      --text: #e2e8f0;
+      --text-muted: #94a3b8;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --success: #10b981;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --radius: 8px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      width: 520px;
+      max-height: 590px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 13px;
+      padding: 16px;
+      overflow-y: auto;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand h1 {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      color: #fff;
+    }
+
+    .badge {
+      background: rgba(59, 130, 246, 0.15);
+      color: var(--primary);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      padding: 2px 6px;
+      font-size: 10px;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      font-size: 12px;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .dot.connected { background: var(--success); box-shadow: 0 0 8px var(--success); }
+    .dot.connecting { background: var(--warning); }
+    .dot.disconnected { background: var(--danger); }
+
+    .tabs-nav {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .tab-btn {
+      flex: 1;
+      padding: 8px 12px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+
+    .tab-btn.active {
+      background: var(--primary);
+      color: #fff;
+      border-color: var(--primary);
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    .form-group {
+      margin-bottom: 10px;
+    }
+
+    .form-group:last-child {
+      margin-bottom: 0;
+    }
+
+    label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      padding: 7px 10px;
+      background: #090d16;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 12px;
+      font-family: monospace;
+    }
+
+    input[type="text"]:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
+
+    .btn {
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: all 0.2s;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: #fff;
+    }
+    .btn-primary:hover { background: var(--primary-hover); }
+
+    .btn-secondary {
+      background: #1e293b;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover { background: #334155; }
+
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.15);
+      color: var(--danger);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+    .btn-danger:hover { background: var(--danger); color: #fff; }
+
+    .btn-group {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    /* Model list styles */
+    .model-card {
+      background: #090d16;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px;
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .model-info h4 {
+      font-size: 13px;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    .model-info p {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: monospace;
+    }
+
+    .model-actions {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 34px;
+      height: 20px;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: #334155;
+      transition: .2s;
+      border-radius: 20px;
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 14px;
+      width: 14px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .2s;
+      border-radius: 50%;
+    }
+
+    input:checked + .slider {
+      background-color: var(--success);
+    }
+
+    input:checked + .slider:before {
+      transform: translateX(14px);
+    }
+
+    .copy-box {
+      display: flex;
+      gap: 6px;
+      background: #090d16;
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      align-items: center;
+      margin-top: 4px;
+    }
+
+    .copy-box span {
+      flex: 1;
+      font-family: monospace;
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .copy-btn {
+      background: none;
+      border: none;
+      color: var(--primary);
+      cursor: pointer;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <h1>ZeroLLM</h1>
+      <span class="badge">OpenAI v1</span>
+    </div>
+    <div class="status-pill">
+      <div class="dot disconnected" id="connDot"></div>
+      <span id="connText">Disconnected</span>
+    </div>
+  </header>
+
+  <nav class="tabs-nav">
+    <button class="tab-btn active" data-tab="models">🤖 Models</button>
+    <button class="tab-btn" data-tab="create">➕ Create Model</button>
+    <button class="tab-btn" data-tab="connection">⚡ Cloudflare Bridge</button>
+  </nav>
+
+  <!-- TAB 1: MODELS LIST -->
+  <section id="tab-models" class="tab-content active">
+    <div class="card">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <label style="margin: 0;">Registered Web AI Models</label>
+        <span id="modelCountBadge" style="font-size: 11px; color: var(--primary);">0 Models</span>
+      </div>
+      <div id="modelsList">
+        <!-- Model Cards rendered dynamically -->
+      </div>
+    </div>
+  </section>
+
+  <!-- TAB 2: CREATE MODEL (5 COLS CONFIG) -->
+  <section id="tab-create" class="tab-content">
+    <div class="card">
+      <div class="form-group">
+        <label>Model ID (OpenAI API name)</label>
+        <input type="text" id="mId" placeholder="e.g. chatsmith, chatgpt-4o, my-model">
+      </div>
+      <div class="form-group">
+        <label>1. URL Wildcard Area Working</label>
+        <input type="text" id="mUrl" placeholder="e.g. *://chatsmith.io/* or *://chatgpt.com/c/*">
+      </div>
+      <div class="form-group">
+        <label>2. Regex Start Chat Area (New Chat)</label>
+        <input type="text" id="mStart" placeholder="e.g. textarea[placeholder*='Ask'] or /prompt-textarea/">
+      </div>
+      <div class="form-group">
+        <label>3. Regex Continue Chat Area</label>
+        <input type="text" id="mContinue" placeholder="e.g. textarea, div[contenteditable='true']">
+      </div>
+      <div class="form-group">
+        <label>4. Result Area Regex Respon (Detect Sedang Stream)</label>
+        <input type="text" id="mStream" placeholder="e.g. button[aria-label*='Stop'], .streaming, .typing">
+      </div>
+      <div class="form-group">
+        <label>5. Result Area Regex Respon (Detect Sudah Done)</label>
+        <input type="text" id="mDone" placeholder="e.g. button[data-testid='send-button'], .message-ai:last-child">
+      </div>
+      <div class="form-group">
+        <label>Result Container Area (DOM to Markdown Parser)</label>
+        <input type="text" id="mContainer" placeholder="e.g. [data-message-author-role='assistant'] .markdown, .content">
+      </div>
+
+      <div class="btn-group">
+        <button class="btn btn-primary" id="saveModelBtn">💾 Save Model</button>
+        <button class="btn btn-secondary" id="resetPresetBtn">↺ Load Presets</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- TAB 3: CONNECTION CONFIG -->
+  <section id="tab-connection" class="tab-content">
+    <div class="card">
+      <div class="form-group">
+        <label>Cloudflare Bridge URL</label>
+        <input type="text" id="cfgBridgeUrl" value="https://llm-bridge.insidexofficial.workers.dev">
+      </div>
+      <div class="form-group">
+        <label>Room ID</label>
+        <input type="text" id="cfgRoomId" placeholder="e.g. 868ff0aa">
+      </div>
+      <div class="form-group">
+        <label>API Key</label>
+        <div class="copy-box">
+          <span id="dispApiKey">-</span>
+          <button class="copy-btn" id="copyKeyBtn" title="Copy API Key">📋</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>OpenAI Base URL</label>
+        <div class="copy-box">
+          <span id="dispBaseUrl">https://llm-bridge.insidexofficial.workers.dev/v1</span>
+          <button class="copy-btn" id="copyUrlBtn" title="Copy Base URL">📋</button>
+        </div>
+      </div>
+
+      <div class="btn-group">
+        <button class="btn btn-primary" id="newRoomBtn">🚀 Create New Room</button>
+        <button class="btn btn-secondary" id="reconnectBtn">⚡ Reconnect</button>
+      </div>
+    </div>
+  </section>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

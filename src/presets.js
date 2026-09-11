@@ -1,0 +1,79 @@
+/**
+ * Default preset model configurations for popular AI chatbots
+ * 
+ * Verified live using browser-automation:
+ * 1. ChatGPT:
+ *    - Input: #prompt-textarea, textarea[id='prompt-textarea'], div[id='prompt-textarea'], textarea[placeholder*='Message']
+ *    - Submit/Done: button[data-testid='send-button'], button[aria-label*='Kirim'], button[aria-label*='Send']
+ *    - Stream: button[data-testid='stop-button'], button[aria-label*='Berhenti'], button[aria-label*='Stop']
+ *    - Response container: [data-message-author-role='assistant'], article [data-message-author-role='assistant'] .markdown, .agent-turn
+ * 
+ * 2. ChatSmith (chatsmith.io):
+ *    - Input: [contenteditable='true'], div.ProseMirror, textarea, [placeholder*='Talk with Chat Smith']
+ *    - Submit/Done: button:has(svg), .send-btn, button[type='submit']
+ *    - Stream: button.stop, .streaming, [aria-label*='Stop']
+ *    - Response container: .message-ai, .chat-bubble-bot, .response-content
+ */
+
+export const DEFAULT_PRESETS = [
+  {
+    id: "chatgpt",
+    name: "ChatGPT (Web)",
+    enabled: true,
+    urlPattern: "*://chatgpt.com/*",
+    startChatSelector: "#prompt-textarea, textarea[id='prompt-textarea'], div#prompt-textarea, [data-testid='prompt-textarea']",
+    continueChatSelector: "#prompt-textarea, textarea[id='prompt-textarea'], div#prompt-textarea, [data-testid='prompt-textarea']",
+    streamSelector: "button[data-testid='stop-button'], button[aria-label*='Berhenti'], button[aria-label*='Stop'], [data-testid='fruitjuice-send-button']:has(svg path[d*='M2 12'])",
+    doneSelector: "button[data-testid='send-button'], button[aria-label*='Kirim'], button[aria-label*='Send'], button[data-testid='fruitjuice-send-button']:not([disabled])",
+    resultContainerSelector: "[data-message-author-role='assistant'] .markdown, [data-message-author-role='assistant'], article [data-message-author-role='assistant']",
+    description: "Official OpenAI ChatGPT Web Interface (Verified Live)"
+  },
+  {
+    id: "chatsmith",
+    name: "ChatSmith AI",
+    enabled: true,
+    urlPattern: "*://chatsmith.io/*",
+    startChatSelector: "[contenteditable='true'], div.ProseMirror, textarea, [aria-label*='Chat Smith'], [placeholder*='Talk with Chat Smith']",
+    continueChatSelector: "[contenteditable='true'], div.ProseMirror, textarea, [aria-label*='Chat Smith'], [placeholder*='Talk with Chat Smith']",
+    streamSelector: "button[aria-label*='Stop'], button.stop-button, .streaming, .typing-indicator",
+    doneSelector: "button:has(svg), button[type='submit'], .send-button:not([disabled])",
+    resultContainerSelector: ".message-ai .content, .chat-bubble-bot .text, .assistant-message, .message-content",
+    description: "ChatSmith Web AI Interface (Verified Live)"
+  },
+  {
+    id: "claude",
+    name: "Claude AI (Anthropic)",
+    enabled: true,
+    urlPattern: "*://claude.ai/*",
+    startChatSelector: "div[contenteditable='true'], fieldset div[contenteditable='true'], [aria-label*='Write your prompt']",
+    continueChatSelector: "div[contenteditable='true'], fieldset div[contenteditable='true'], [aria-label*='Write your prompt']",
+    streamSelector: "button[aria-label*='Stop response'], button[aria-label*='Stop'], .stop-button",
+    doneSelector: "button[aria-label*='Send Message'], button[aria-label*='Send'], .font-claude-message",
+    resultContainerSelector: ".font-claude-message, [data-is-streaming='false'], .standard-markdown",
+    description: "Anthropic Claude Web Interface"
+  },
+  {
+    id: "gemini",
+    name: "Google Gemini",
+    enabled: true,
+    urlPattern: "*://gemini.google.com/*",
+    startChatSelector: ".ql-editor, div[contenteditable='true'], textarea[aria-label*='prompt']",
+    continueChatSelector: ".ql-editor, div[contenteditable='true'], textarea[aria-label*='prompt']",
+    streamSelector: "button[aria-label*='Stop'], button[aria-label*='Berhenti'], .sparkle-animation",
+    doneSelector: "button[aria-label*='Send message'], button[aria-label*='Kirim pesan'], message-content",
+    resultContainerSelector: "message-content, .model-response-text, .response-container-content",
+    description: "Google Gemini Web Interface"
+  },
+  {
+    id: "generic-ai",
+    name: "Generic AI Chatbot",
+    enabled: true,
+    urlPattern: "*://*/*",
+    startChatSelector: "textarea, input[type='text'], [contenteditable='true']",
+    continueChatSelector: "textarea, input[type='text'], [contenteditable='true']",
+    streamSelector: "button[aria-label*='Stop'], .streaming, .typing, [data-state='streaming']",
+    doneSelector: "button[type='submit'], button[aria-label*='Send'], .message-assistant, .bot-response",
+    resultContainerSelector: ".message-assistant, .bot-response, .markdown, article",
+    description: "Generic AI Chatbot Pattern"
+  }
+];
