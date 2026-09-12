@@ -582,22 +582,27 @@ async function nativeTypeAndSend(tabId, text, modelConfig) {
     await chrome.debugger.sendCommand(debuggee, "Input.insertText", { text });
     await new Promise(r => setTimeout(r, 150));
 
-    // 4. Tekan tombol Enter menggunakan Input.dispatchKeyEvent (rawKeyDown + keyUp)
+    // 4. Tekan tombol Enter menggunakan Input.dispatchKeyEvent standar keyboard hardware
     await chrome.debugger.sendCommand(debuggee, "Input.dispatchKeyEvent", {
-      type: "rawKeyDown",
+      type: "keyDown",
+      key: "Enter",
+      code: "Enter",
       windowsVirtualKeyCode: 13,
-      unmodifiedText: "\r",
-      text: "\r"
+      nativeVirtualKeyCode: 13,
+      macCharCode: 13,
+      text: "\r",
+      unmodifiedText: "\r"
     });
     await chrome.debugger.sendCommand(debuggee, "Input.dispatchKeyEvent", {
       type: "keyUp",
+      key: "Enter",
+      code: "Enter",
       windowsVirtualKeyCode: 13,
-      unmodifiedText: "\r",
-      text: "\r"
+      nativeVirtualKeyCode: 13
     });
 
     // 4b. Cadangan klik tombol submit jika masih aktif
-    await new Promise(r => setTimeout(r, 100));
+    await new Promise(r => setTimeout(r, 200));
     await chrome.tabs.sendMessage(tabId, { type: "clickSubmitIfActive", modelConfig }).catch(() => {});
 
     console.log(`[ZeroLLM CDP] Successfully typed and pressed Enter via Chrome Debugger on tab #${tabId}`);

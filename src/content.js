@@ -240,6 +240,64 @@ async function enterPrompt(inputEl, text) {
 }
 
 /**
+ * Trigger Send Button click or Keyboard Enter on input box
+ */
+function triggerSendOrEnter(modelConfig) {
+  // 1. Cari submit button dengan selector paling lengkap
+  let submitBtn = null;
+  if (modelConfig?.doneSelector) {
+    submitBtn = findElementByPattern(modelConfig.doneSelector);
+  }
+  if (!submitBtn) {
+    submitBtn = document.querySelector(
+      "button[data-testid='send-button']:not([disabled]), " +
+      "button[data-testid='fruitjuice-send-button']:not([disabled]), " +
+      "button.wm-composer-submitButton:not([disabled]), " +
+      "button[aria-label*='Kirim']:not([disabled]), " +
+      "button[aria-label*='Send']:not([disabled]), " +
+      "form button[type='submit']:not([disabled]), " +
+      ".send-button:not([disabled])"
+    );
+  }
+
+  if (submitBtn && !submitBtn.disabled && submitBtn.getAttribute("aria-disabled") !== "true") {
+    // Multi-event mouse dispatch agar React dan pointer capture mendeteksi klik asli
+    ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(type => {
+      submitBtn.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+    });
+    try { submitBtn.click(); } catch(e) {}
+    console.log("[ZeroLLM ContentScript] Clicked submit button successfully");
+    return true;
+  }
+
+  // 2. Jika tombol send tidak terdeteksi atau disabled: picu Enter keyboard event langsung ke input/textarea
+  let inputEl = findElementByPattern(modelConfig?.continueChatSelector) || 
+                findElementByPattern(modelConfig?.startChatSelector) ||
+                document.querySelector("#prompt-textarea, textarea, [contenteditable='true']");
+
+  if (inputEl) {
+    inputEl.focus();
+    ["keydown", "keypress", "keyup"].forEach(type => {
+      inputEl.dispatchEvent(new KeyboardEvent(type, {
+        key: "Enter",
+        code: "Enter",
+        keyCode: 13,
+        which: 13,
+        charCode: type === "keypress" ? 13 : 0,
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        shiftKey: false
+      }));
+    });
+    console.log("[ZeroLLM ContentScript] Dispatched Enter keyboard event to input element");
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Observe live AI response stream in the DOM until completion
  */
 function observeCompletion(requestId, modelConfig, query, streamMode, initialCount = 0) {
@@ -250,13 +308,18 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
     let pollCount = 0;
     const maxPolls = 180; // 90 seconds max
 
+    // Tangkap isi teks terakhir sebelum prompt dikirim agar tidak salah deteksi pesan lama
+    const initialContainers = getResponseContainers(modelConfig);
+    const initialLastEl = initialContainers.length > 0 ? initialContainers[initialContainers.length - 1] : null;
+    const initialLastMarkdown = initialLastEl ? cleanHtmlToMarkdown(initialLastEl.innerHTML || initialLastEl) : "";
+
     const interval = setInterval(() => {
       pollCount++;
       const currentContainers = getResponseContainers(modelConfig);
       
-      // Target the latest response
+      const hasNewContainer = currentContainers.length > initialCount;
       let latestResponseEl = null;
-      if (currentContainers.length > initialCount) {
+      if (hasNewContainer) {
         latestResponseEl = currentContainers[currentContainers.length - 1];
       } else if (currentContainers.length > 0) {
         latestResponseEl = currentContainers[currentContainers.length - 1];
@@ -271,11 +334,17 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
       const isDone = checkIsDone(modelConfig);
       const markdown = cleanHtmlToMarkdown(rawHtml || latestResponseEl || "");
 
-      // Validate meaningful text
+      // Validasi: Apakah teks ini benar-benar respon baru (bukan teks lama sebelum prompt terkirim)?
+      const isNewContent = hasNewContainer || (markdown !== initialLastMarkdown && initialLastMarkdown !== "") || isStreaming;
       const hasMeaningfulText = markdown.replace(/[`\s]/g, "").length > 0;
       const thinkingOnly = isThinkingOnly(markdown);
 
-      if (hasMeaningfulText && !thinkingOnly) {
+      // Auto-retry trigger submit jika dalam 3-5 poll pertama (1.5-2.5s) stream belum dimulai
+      if (pollCount >= 3 && pollCount <= 5 && !streamStarted && !isStreaming) {
+        triggerSendOrEnter(modelConfig);
+      }
+
+      if (isNewContent && hasMeaningfulText && !thinkingOnly) {
         if (markdown !== lastMarkdown) {
           const delta = markdown.startsWith(lastMarkdown) ? 
                         markdown.slice(lastMarkdown.length) : 
@@ -297,18 +366,16 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
           stableCount++;
         }
       } else {
-        // Still waiting or thinking
+        // Still waiting or thinking or old content
         stableCount = 0;
       }
 
       // Selesai jika:
-      // 1. Stream sudah mulai dan ada teks jawaban nyata (bukan cuma placeholder "Thinking")
+      // 1. Stream sudah mulai dan teks baru terkonfirmasi
       // 2. Tidak lagi dalam status streaming
-      // 3. Teks stabil (tidak berubah):
-      //    - Jika isDone terdeteksi (send button kembali aktif/enabled): minimal 2 poll (1 detik)
-      //    - Jika isDone tidak terdeteksi: minimal 4 poll (2 detik) stabil
+      // 3. Teks stabil
       const stableThreshold = isDone ? 2 : 4;
-      if (streamStarted && hasMeaningfulText && !thinkingOnly && !isStreaming && stableCount >= stableThreshold && pollCount > 4) {
+      if (streamStarted && hasMeaningfulText && !thinkingOnly && !isStreaming && stableCount >= stableThreshold && pollCount > 3) {
         clearInterval(interval);
         resolve(cleanResultMarkdown(lastMarkdown));
         return;
@@ -317,7 +384,7 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
       // Safety timeout
       if (pollCount >= maxPolls) {
         clearInterval(interval);
-        if (lastMarkdown && hasMeaningfulText && !thinkingOnly) {
+        if (lastMarkdown && hasMeaningfulText && !thinkingOnly && streamStarted) {
           resolve(cleanResultMarkdown(lastMarkdown));
         } else {
           reject(new Error("Timeout waiting for AI response from page DOM"));
@@ -414,18 +481,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  // Klik tombol kirim jika masih aktif setelah penekanan Enter via CDP
+  // Klik tombol kirim atau picu Enter keyboard jika masih aktif setelah penekanan Enter via CDP
   if (msg.type === "clickSubmitIfActive") {
-    let submitBtn = null;
-    if (msg.modelConfig?.doneSelector) {
-      submitBtn = findElementByPattern(msg.modelConfig.doneSelector);
-    }
-    if (!submitBtn) {
-      submitBtn = document.querySelector("button.wm-composer-submitButton:not([disabled]), button[data-testid='send-button']:not([disabled]), button[aria-label*='Kirim']:not([disabled]), button[aria-label*='Send']:not([disabled]), button[type='submit']:not([disabled]), .send-button:not([disabled])");
-    }
-    if (submitBtn && !submitBtn.disabled) {
-      try { submitBtn.click(); } catch(e) {}
-    }
+    triggerSendOrEnter(msg.modelConfig);
     sendResponse({ ok: true });
     return true;
   }
@@ -434,17 +492,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "waitForResponse") {
     const { requestId, modelConfig, query, stream, initialCount } = msg;
 
-    // Cek tombol submit jika ada yang perlu diklik (cadangan jika event Enter belum terpicu)
-    let submitBtn = null;
-    if (modelConfig?.doneSelector) {
-      submitBtn = findElementByPattern(modelConfig.doneSelector);
-    }
-    if (!submitBtn) {
-      submitBtn = document.querySelector("button.wm-composer-submitButton:not([disabled]), button[data-testid='send-button']:not([disabled]), button[aria-label*='Kirim']:not([disabled]), button[aria-label*='Send']:not([disabled]), button[type='submit']:not([disabled]), .send-button:not([disabled])");
-    }
-    if (submitBtn && !submitBtn.disabled) {
-      try { submitBtn.click(); } catch(e) {}
-    }
+    // Cadangan picu kirim / enter jika belum terkirim
+    triggerSendOrEnter(modelConfig);
 
     observeCompletion(requestId, modelConfig, query, stream, initialCount || 0)
       .then(fullMarkdown => {
