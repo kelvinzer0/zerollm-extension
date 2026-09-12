@@ -499,7 +499,7 @@ function triggerSendOrEnter(modelConfig) {
 /**
  * Observe live AI response stream in the DOM until completion
  */
-function observeCompletion(requestId, modelConfig, query, streamMode, initialCount = 0, initialText = "") {
+function observeCompletion(requestId, modelConfig, query, streamMode, initialCount = 0, initialText = "", isRetry = false) {
   return new Promise((resolve, reject) => {
     let lastMarkdown = "";
     let streamStarted = false;
@@ -564,6 +564,50 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
 
       if (pollCount % 10 === 0 || pollCount <= 3) {
         console.log(`[ZeroLLM Monitor] Poll #${pollCount}: containers=${currentContainers.length}, streaming=${isStreaming}, streamStarted=${streamStarted}, textLen=${meaningfulMarkdown.length}, stable=${stableCount}`);
+      }
+
+      // ── DETEKSI AI BENGONG -> AUTO NEW CHAT & RETRY ──
+      // Jika setelah 12.5 detik (25 polls) belum ada respon mengalir sama sekali
+      if (!isRetry && pollCount === 25 && !streamStarted && !isStreaming) {
+        console.warn("[ZeroLLM Fallback] AI tidak merespon (bengong) setelah 12.5 detik. Membuka Obrolan Baru & mengulang...");
+        
+        // Coba picu tombol submit/enter sekali lagi
+        triggerSendOrEnter(modelConfig);
+
+        setTimeout(async () => {
+          if (!streamStarted && !checkIsStreaming(modelConfig)) {
+            console.log("[ZeroLLM Fallback] Melakukan New Chat fallback...");
+            const newChatSel = modelConfig?.newChatSelector || "a[href='/'], [data-testid='new-chat-button'], [aria-label*='Obrolan baru'], [aria-label*='New chat'], [aria-label*='Percakapan baru'], [aria-label*='新建对话']";
+            const newChatBtn = findElementByPattern(newChatSel);
+            if (newChatBtn) {
+              try { newChatBtn.click(); } catch(e) {}
+            }
+
+            // Tunggu input siap di percakapan baru
+            await new Promise(r => setTimeout(r, 1500));
+            let retryInput = null;
+            for (let i = 0; i < 15; i++) {
+              retryInput = findElementByPattern(modelConfig?.startChatSelector) ||
+                           findElementByPattern(modelConfig?.continueChatSelector) ||
+                           document.querySelector("#prompt-textarea, #mobile-composer-prompt, textarea, [contenteditable='true']");
+              if (retryInput && !retryInput.disabled && retryInput.getAttribute("aria-disabled") !== "true") break;
+              await new Promise(r => setTimeout(r, 400));
+            }
+
+            if (retryInput) {
+              console.log("[ZeroLLM Fallback] Mengetik ulang prompt di percakapan baru...");
+              await enterPrompt(retryInput, query);
+              await new Promise(r => setTimeout(r, 400));
+              triggerSendOrEnter(modelConfig);
+
+              pollCount = 0;
+              isRetry = true;
+              initialCount = getResponseContainers(modelConfig).length;
+              initialText = "";
+              lastMarkdown = "";
+            }
+          }
+        }, 1500);
       }
 
       // Selesai jika:
