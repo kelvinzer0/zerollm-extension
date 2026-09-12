@@ -6,8 +6,10 @@
  *    - Jika tab belum ada: otomatis membuka tab baru di background.
  *    - Jika extension di-reload: otomatis menyambung ulang content script ke tab yang sudah ada
  *      tanpa perlu refresh tab manual!
- * 2. Multi-tab parallel orchestration: Map<modelId, tabId>.
- * 3. Integrasi Cloudflare Worker Bridge via WebSocket.
+ * 2. Active Keepalive Heartbeat: Mengirim ping berkala (15s) agar WebSocket ke Cloudflare Worker
+ *    dan Chrome MV3 Service Worker tidak tertidur (sleep/hibernation).
+ * 3. Multi-tab parallel orchestration: Map<modelId, tabId>.
+ * 4. Integrasi Cloudflare Worker Bridge via WebSocket.
  */
 
 import { DEFAULT_PRESETS } from "./presets.js";
@@ -18,6 +20,7 @@ let roomId = "default";
 let apiKey = "";
 let connectionState = "disconnected";
 let reconnectTimer = null;
+let pingInterval = null;
 
 // User defined & preset models
 let models = [];
@@ -76,7 +79,6 @@ async function injectContentScriptSilently(tabId) {
     const res = await chrome.tabs.sendMessage(tabId, { type: "ping" });
     if (res && res.pong) return true;
   } catch (e) {
-    // Ping gagal (karena extension baru di-reload), reinject otomatis
     try {
       await chrome.scripting.executeScript({
         target: { tabId },
@@ -84,7 +86,6 @@ async function injectContentScriptSilently(tabId) {
       });
       return true;
     } catch (scriptErr) {
-      // Tab mungkin privileged atau sedang loading
       return false;
     }
   }
@@ -135,7 +136,7 @@ async function getTabForModel(modelConfig) {
 
   const newTab = await chrome.tabs.create({
     url: targetUrl,
-    active: false // Buka di background agar tidak mengganggu fokus pengguna
+    active: false
   });
   modelTabMap.set(modelConfig.id, newTab.id);
 
@@ -166,7 +167,7 @@ async function ensureContentScript(tabId) {
 }
 
 // ============================================================
-//  WEBSOCKET BRIDGE CONNECTION
+//  WEBSOCKET BRIDGE CONNECTION & ACTIVE KEEPALIVE
 // ============================================================
 
 function connectBridge(url, room, key) {
@@ -174,6 +175,7 @@ function connectBridge(url, room, key) {
     try { ws.close(); } catch (e) {}
     ws = null;
   }
+  clearInterval(pingInterval);
 
   bridgeUrl = url;
   roomId = room;
@@ -195,6 +197,14 @@ function connectBridge(url, room, key) {
 
       // Sinkronisasi model ke Cloudflare Worker
       syncModelsToBridge();
+
+      // Mulai heartbeat keepalive aktif setiap 15 detik agar koneksi tidak pernah putus/hibernasi
+      clearInterval(pingInterval);
+      pingInterval = setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "pong" }));
+        }
+      }, 15000);
     };
 
     ws.onmessage = (event) => {
@@ -209,10 +219,11 @@ function connectBridge(url, room, key) {
     ws.onclose = () => {
       connectionState = "disconnected";
       broadcastState();
+      clearInterval(pingInterval);
       ws = null;
       reconnectTimer = setTimeout(() => {
         if (bridgeUrl && roomId) connectBridge(bridgeUrl, roomId, apiKey);
-      }, 5000);
+      }, 3000);
     };
 
     ws.onerror = (err) => {
@@ -226,6 +237,7 @@ function connectBridge(url, room, key) {
 
 function disconnectBridge() {
   clearTimeout(reconnectTimer);
+  clearInterval(pingInterval);
   if (ws) {
     try { ws.close(); } catch (e) {}
     ws = null;
@@ -349,6 +361,7 @@ async function processModelQueue(modelId) {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   switch (msg.type) {
+    // Forwarded from content script to Cloudflare Worker
     case "stream":
       sendToBridge({ type: "stream", requestId: msg.requestId, delta: msg.delta });
       break;
