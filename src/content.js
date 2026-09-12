@@ -378,7 +378,7 @@ function checkIsDone(modelConfig) {
 function isThinkingOnly(text) {
   if (!text) return false;
   const cleaned = text.replace(/[\u200B-\u200D\uFEFF]/g, "").trim().toLowerCase();
-  return /^(thinking(\.{0,3}|…)?|thinking process(\.{0,3}|…)?|thinking completed|menalar(\.{0,3}|…)?|sedang berpikir(\.{0,3}|…)?|berhenti berpikir|stop thinking|berpikir(\.{0,3}|…)?|(?:berpikir|menalar)\s+selama\s+.*|thought\s+for\s+.*|已完成思考|思考过程)$/i.test(cleaned);
+  return /^(thinking(\.{0,3}|…)?|thinking process(\.{0,3}|…)?|thinking completed|finished thinking|menalar(\.{0,3}|…)?|sedang berpikir(\.{0,3}|…)?|berhenti berpikir|stop thinking|berpikir(\.{0,3}|…)?|(?:berpikir|menalar)\s+selama\s+.*|thought\s+for\s+.*|已完成思考|思考过程)$/i.test(cleaned);
 }
 
 function cleanResultMarkdown(markdown) {
@@ -387,12 +387,12 @@ function cleanResultMarkdown(markdown) {
     .replace(/[\u200B-\u200D\uFEFF]/g, "")
     // Hapus header accessibility Claude
     .replace(/^(?:#+\s*)?(?:Claude merespons:|Claude's response:|Claude:\s*)\s*/gi, "")
-    // Hapus header thinking Qwen, DeepSeek, ChatGPT, Claude, Gemini, dll
-    .replace(/^(?:#+\s*)?(?:Thinking completed|Thinking process|Thought process|Thinking|Menalar|Sedang berpikir|Berhenti berpikir|Stop thinking|已完成思考|思考过程)(?:\.{0,3}|…)?\s*(?:\n+|$)/gi, "")
+    // Hapus header thinking Qwen, DeepSeek, ChatGPT, Claude, Gemini, Xiaomi MiMo, dll
+    .replace(/^(?:#+\s*)?(?:Thinking completed|Thinking process|Thought process|Finished thinking|Thinking|Menalar|Sedang berpikir|Berhenti berpikir|Stop thinking|已完成思考|思考过程)(?:\.{0,3}|…)?\s*(?:\n+|$)/gi, "")
     .replace(/^(?:Berhenti berpikir|Stop thinking)\s*\n+/gi, "")
     .replace(/^(?:Berpikir|Menalar)\s+selama\s+[^\n]+\n+/gi, "")
     .replace(/^(?:Thought for\s+[^\n]+)\n+/gi, "")
-    .replace(/^(?:Thinking completed|Thinking process)\s*/gi, "")
+    .replace(/^(?:Thinking completed|Thinking process|Finished thinking)\s*/gi, "")
     .replace(/\n{3,}/g, "\n\n");
   return cleaned.trim() || markdown.trim();
 }

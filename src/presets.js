@@ -239,13 +239,13 @@ export const DEFAULT_PRESETS = [
     enabled: true,
     defaultUrl: "https://aistudio.xiaomimimo.com",
     urlPattern: "*://aistudio.xiaomimimo.com/*",
-    responseScope: "main, [role='main'], [class*='chat-list'], [class*='conversation'], [class*='message-list'], #app, #root",
+    responseScope: "main, [role='main'], div[class*='chat'], [class*='message-list'], #app, #root",
     newChatSelector: "button[aria-label*='New conversation'], [aria-label*='新建对话'], button:has-text('新建对话'), button:has-text('New chat')",
     startChatSelector: "textarea[placeholder], textarea, [contenteditable='true']",
     continueChatSelector: "textarea[placeholder], textarea, [contenteditable='true']",
     streamSelector: "button[class*='stop'], [aria-label*='Stop'], button[aria-label*='停止'], button[aria-label*='Berhenti']",
-    doneSelector: "button[class*='send']:not([disabled]), button[type='submit']:not([disabled]), button[aria-label*='Send']:not([disabled])",
-    resultContainerSelector: "div[class*='message-item']:not([class*='user']), div[class*='chat-item']:not([class*='user']), div:has(> button[title*='Copy'], button[class*='copy']), [class*='assistant'], [class*='message-content'], .markdown",
+    doneSelector: "button:has(svg path[d*='M.244']), button:has(svg path[d*='18.202']), button[class*='send']:not([disabled]), button[type='submit']:not([disabled]), button[aria-label*='Send']:not([disabled])",
+    resultContainerSelector: ".markdown-prose, [class*='markdown-prose'], [class*='Markdown_markdown'], div[class*='message-item']:not([class*='user']), div[class*='chat-item']:not([class*='user']), [class*='message-content'], .markdown",
     description: "Xiaomi MiMo AI Studio Web Interface (aistudio.xiaomimimo.com)"
   },
   {
