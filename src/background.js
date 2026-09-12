@@ -50,19 +50,28 @@ const activeRequests = new Map();
 async function loadModels() {
   const data = await chrome.storage.local.get(["customModels", "bridgeUrl", "roomId", "apiKey", "executionMode"]);
   if (data.customModels && Array.isArray(data.customModels) && data.customModels.length > 0) {
-    // Preserve custom models & user edits, but auto-append newly introduced default presets
+    // Preserve custom models & user preferences, but update official preset selectors and append new presets
     const existingIds = new Set(data.customModels.map(m => m.id));
-    let hasNew = false;
-    models = [...data.customModels];
+    let updatedModels = data.customModels.map(m => {
+      const defaultPreset = DEFAULT_PRESETS.find(p => p.id === m.id);
+      if (defaultPreset) {
+        // Sync selectors and URLs with latest official updates while preserving user enabled preference
+        return {
+          ...defaultPreset,
+          enabled: m.enabled !== undefined ? m.enabled : defaultPreset.enabled
+        };
+      }
+      return m;
+    });
+
     for (const preset of DEFAULT_PRESETS) {
       if (!existingIds.has(preset.id)) {
-        models.push({ ...preset });
-        hasNew = true;
+        updatedModels.push({ ...preset });
       }
     }
-    if (hasNew) {
-      await chrome.storage.local.set({ customModels: models });
-    }
+
+    models = updatedModels;
+    await chrome.storage.local.set({ customModels: models });
   } else {
     models = [...DEFAULT_PRESETS];
     await chrome.storage.local.set({ customModels: models });

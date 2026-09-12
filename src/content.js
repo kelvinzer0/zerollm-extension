@@ -26,6 +26,8 @@ function cleanHtmlToMarkdown(elementOrHtml) {
 
     const tag = node.tagName.toLowerCase();
     if (["script", "style", "noscript", "svg", "button", "iframe"].includes(tag)) return "";
+    const role = node.getAttribute ? node.getAttribute("role") : null;
+    if (role === "button" && !inner.trim()) return "";
 
     let inner = "";
     for (const child of node.childNodes) {
@@ -72,13 +74,26 @@ function cleanHtmlToMarkdown(elementOrHtml) {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
   if (!parsed && (elementOrHtml instanceof Element || (doc && doc.body))) {
-    const rawText = ((doc.body || elementOrHtml).innerText || "")
-      .replace(/[\u200B-\u200D\uFEFF]/g, "")
-      .trim();
-    if (isThinkingOnly(rawText)) {
-      return "";
+    const target = (doc && doc.body) ? doc.body : elementOrHtml;
+    try {
+      // Clone element agar tidak merusak live DOM dan bersihkan elemen UI tombol
+      const clone = target.cloneNode(true);
+      clone.querySelectorAll("script, style, noscript, svg, button, [role='button'], .copy-btn, .action-btn").forEach(el => el.remove());
+      const rawText = (clone.innerText || clone.textContent || "")
+        .replace(/[\u200B-\u200D\uFEFF]/g, "")
+        .trim();
+      if (!isThinkingOnly(rawText)) {
+        return rawText;
+      }
+    } catch(e) {
+      const rawText = (target.innerText || "")
+        .replace(/[\u200B-\u200D\uFEFF]/g, "")
+        .trim();
+      if (!isThinkingOnly(rawText)) {
+        return rawText;
+      }
     }
-    return rawText;
+    return "";
   }
   return parsed;
 }
@@ -123,30 +138,126 @@ function findElementByPattern(selectorOrRegex) {
 }
 
 /**
+ * Validasi apakah suatu elemen pantas dijadikan response container
+ */
+function isValidResponseElement(el) {
+  if (!el || !(el instanceof Element)) return false;
+  const tag = el.tagName.toLowerCase();
+  if (["textarea", "input", "form", "script", "style", "head"].includes(tag)) return false;
+  // Cek apakah memiliki dimensi atau teks bermakna
+  const text = (el.innerText || el.textContent || "").replace(/[\u200B-\u200D\uFEFF\s]/g, "");
+  return text.length > 0;
+}
+
+/**
  * Find all matching assistant response containers
+ * Multi-layer detection: Model Selector -> Well-Known AI Selectors -> Smart Action Anchor -> Semantic Turn -> Text Fallback
  */
 function getResponseContainers(modelConfig) {
-  const selectors = [
-    modelConfig.resultContainerSelector,
+  // 1. Coba selector spesifik dari modelConfig
+  if (modelConfig?.resultContainerSelector) {
+    const parts = modelConfig.resultContainerSelector.split(",").map(s => s.trim()).filter(Boolean);
+    for (const sel of parts) {
+      try {
+        const found = document.querySelectorAll(sel);
+        const valid = Array.from(found).filter(isValidResponseElement);
+        if (valid.length > 0) return valid;
+      } catch (e) {}
+    }
+  }
+
+  // 2. Coba selector standar industri & platform AI ternama
+  const wellKnownSelectors = [
     "div[data-message-author-role='assistant']",
     ".agent-turn [data-message-author-role='assistant']",
-    "[data-message-author-role='assistant'] .markdown",
     "[data-message-author-role='assistant']",
-    "[class*='assistantMessage'] [class*='messageCopy']",
-    "[class*='assistantMessage']",
-    ".markdown",
-    "article",
+    "div[data-is-streaming]",
+    "div[data-testid='chat-message']:not([data-testid='user-message'])",
+    ".font-claude-message",
+    "[class*='font-claude']",
+    ".ds-markdown",
+    "[class*='ds-markdown']",
+    "message-content",
+    ".model-response-text",
+    "[class*='message-item-assistant']",
+    "[class*='chat-item--assistant']",
+    "[class*='message-assistant']",
+    "[class*='assistant-message']",
     ".message-ai",
     ".chat-bubble-bot",
-    "message-content"
-  ].filter(Boolean);
+    "[data-role='assistant']",
+    "[data-author='assistant']",
+    "[class*='qwen-markdown']"
+  ];
 
-  for (const sel of selectors) {
+  for (const sel of wellKnownSelectors) {
     try {
-      const list = document.querySelectorAll(sel);
-      if (list.length > 0) return Array.from(list);
+      const found = document.querySelectorAll(sel);
+      const valid = Array.from(found).filter(isValidResponseElement);
+      if (valid.length > 0) return valid;
     } catch (e) {}
   }
+
+  // 3. SMART ANCHOR DISCOVERY: Temukan container lewat tombol aksi asisten (Copy / Salin / Regenerate)
+  try {
+    const actionButtons = document.querySelectorAll(
+      "button[aria-label*='Copy' i], button[aria-label*='Salin' i], button[aria-label*='复制'], " +
+      "button[title*='Copy' i], button[title*='Salin' i], button[title*='复制'], " +
+      "button[aria-label*='Good' i], button[aria-label*='Bagus' i], button[aria-label*='赞'], " +
+      "button[aria-label*='Regenerate' i], button[aria-label*='Coba lagi' i], button[aria-label*='重新生成'], " +
+      "button[aria-label*='Bacakan' i], button[aria-label*='Read aloud' i]"
+    );
+
+    const anchorContainers = [];
+    const seen = new Set();
+
+    for (const btn of actionButtons) {
+      let parent = btn.closest("article, [data-testid*='message'], [class*='message'], [class*='turn'], [class*='item'], [class*='bubble'], [class*='row']");
+      if (!parent) {
+        parent = btn.parentElement?.parentElement?.parentElement || btn.parentElement?.parentElement;
+      }
+      if (parent && !seen.has(parent) && isValidResponseElement(parent)) {
+        seen.add(parent);
+        anchorContainers.push(parent);
+      }
+    }
+
+    if (anchorContainers.length > 0) {
+      return anchorContainers;
+    }
+  } catch (e) {}
+
+  // 4. Coba selector elemen umum dengan teks markdown di dalam area chat
+  const genericSelectors = [
+    "article",
+    ".markdown",
+    "[class*='markdown']",
+    "[class*='prose']",
+    ".chat-content",
+    "[class*='chat-content']"
+  ];
+
+  for (const sel of genericSelectors) {
+    try {
+      const found = document.querySelectorAll(sel);
+      const valid = Array.from(found).filter(isValidResponseElement);
+      if (valid.length > 0) return valid;
+    } catch (e) {}
+  }
+
+  // 5. ULTIMATE FALLBACK: Cari elemen pesan terakhir di dalam area chat utama
+  try {
+    const mainEl = document.querySelector("main, [role='main'], #chat-container, .chat-container") || document.body;
+    const blocks = mainEl.querySelectorAll("p, pre, div[class*='text'], div[class*='content']");
+    if (blocks.length > 0) {
+      const lastBlock = blocks[blocks.length - 1];
+      const bubble = lastBlock.closest("div:not(main):not(body)") || lastBlock;
+      if (isValidResponseElement(bubble)) {
+        return [bubble];
+      }
+    }
+  } catch (e) {}
+
   return [];
 }
 
@@ -164,17 +275,20 @@ function checkIsDone(modelConfig) {
 function isThinkingOnly(text) {
   if (!text) return false;
   const cleaned = text.replace(/[\u200B-\u200D\uFEFF]/g, "").trim().toLowerCase();
-  return /^(thinking(\.{0,3}|…)?|menalar(\.{0,3}|…)?|sedang berpikir(\.{0,3}|…)?|berhenti berpikir|stop thinking|berpikir(\.{0,3}|…)?|(?:berpikir|menalar)\s+selama\s+.*|thought\s+for\s+.*)$/i.test(cleaned);
+  return /^(thinking(\.{0,3}|…)?|thinking process(\.{0,3}|…)?|thinking completed|menalar(\.{0,3}|…)?|sedang berpikir(\.{0,3}|…)?|berhenti berpikir|stop thinking|berpikir(\.{0,3}|…)?|(?:berpikir|menalar)\s+selama\s+.*|thought\s+for\s+.*|已完成思考|思考过程)$/i.test(cleaned);
 }
 
 function cleanResultMarkdown(markdown) {
   if (!markdown) return "";
   let cleaned = markdown
     .replace(/[\u200B-\u200D\uFEFF]/g, "")
-    .replace(/^(?:#+\s*)?(?:Thinking|Menalar|Sedang berpikir|Berhenti berpikir|Stop thinking)(?:\.{0,3}|…)?\s*\n+/gi, "")
+    // Hapus header thinking Qwen, DeepSeek, ChatGPT, Claude, Gemini, dll
+    .replace(/^(?:#+\s*)?(?:Thinking completed|Thinking process|Thought process|Thinking|Menalar|Sedang berpikir|Berhenti berpikir|Stop thinking|已完成思考|思考过程)(?:\.{0,3}|…)?\s*(?:\n+|$)/gi, "")
     .replace(/^(?:Berhenti berpikir|Stop thinking)\s*\n+/gi, "")
     .replace(/^(?:Berpikir|Menalar)\s+selama\s+[^\n]+\n+/gi, "")
-    .replace(/^(?:Thought for\s+[^\n]+)\n+/gi, "");
+    .replace(/^(?:Thought for\s+[^\n]+)\n+/gi, "")
+    .replace(/^(?:Thinking completed|Thinking process)\s*/gi, "")
+    .replace(/\n{3,}/g, "\n\n");
   return cleaned.trim() || markdown.trim();
 }
 
@@ -182,13 +296,16 @@ function cleanResultMarkdown(markdown) {
  * Check if the page is currently streaming
  */
 function checkIsStreaming(modelConfig) {
-  if (modelConfig.streamSelector) {
+  if (modelConfig?.streamSelector) {
     const el = findElementByPattern(modelConfig.streamSelector);
     if (el && (el.offsetParent !== null || window.getComputedStyle(el).display !== "none")) {
       return true;
     }
   }
-  const genericStream = document.querySelector(".streaming, [data-is-streaming='true'], .typing-indicator");
+  const genericStream = document.querySelector(
+    ".streaming, [data-is-streaming='true'], .typing-indicator, [class*='streaming'], [class*='typing'], " +
+    "button[aria-label*='Stop' i], button[aria-label*='Berhenti' i], button[aria-label*='停止']"
+  );
   if (genericStream && (genericStream.offsetParent !== null || window.getComputedStyle(genericStream).display !== "none")) {
     return true;
   }
@@ -365,12 +482,18 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
         stableCount = 0;
       }
 
+      if (pollCount % 10 === 0 || pollCount <= 3) {
+        console.log(`[ZeroLLM Monitor] Poll #${pollCount}: containers=${currentContainers.length}, streaming=${isStreaming}, streamStarted=${streamStarted}, textLen=${meaningfulMarkdown.length}, stable=${stableCount}`);
+      }
+
       // Selesai jika:
-      // 1. Teks baru terdeteksi (streamStarted)
-      // 2. Tidak lagi dalam status streaming (!isStreaming)
+      // 1. Teks baru terdeteksi (streamStarted) dan memiliki teks bermakna
+      // 2. Tidak lagi dalam status streaming ATAU teks sudah stabil minimal 3 detik (stableCount >= 6 fail-safe)
       // 3. Teks stabil minimal 2 putaran polling (1 detik)
-      if (streamStarted && hasMeaningfulText && !thinkingOnly && !isStreaming && stableCount >= 2 && pollCount >= 2) {
+      const isDoneStreaming = !isStreaming || stableCount >= 6;
+      if (streamStarted && hasMeaningfulText && !thinkingOnly && isDoneStreaming && stableCount >= 2 && pollCount >= 2) {
         clearInterval(interval);
+        console.log(`[ZeroLLM Monitor] Response completed successfully (${meaningfulMarkdown.length} chars)`);
         resolve(cleanResultMarkdown(lastMarkdown));
         return;
       }
@@ -379,6 +502,7 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
       if (pollCount >= maxPolls) {
         clearInterval(interval);
         if (lastMarkdown && hasMeaningfulText && !thinkingOnly) {
+          console.log(`[ZeroLLM Monitor] Max polls reached, returning last stable text (${lastMarkdown.length} chars)`);
           resolve(cleanResultMarkdown(lastMarkdown));
         } else {
           reject(new Error("Timeout waiting for AI response from page DOM"));
