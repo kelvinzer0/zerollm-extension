@@ -190,9 +190,9 @@ function isValidResponseElement(el) {
   // Tolak teks kontrol UI yang pendek
   if (/^(auto|tulis pesan…|tulis pesan|write your prompt|type a message|salin|copy|share|more actions)$/i.test(text)) return false;
 
-  // Tolak teks disclaimer / notice yang sering salah ditangkap sebagai respon
+  // Tolak teks disclaimer / notice / citation yang sering salah ditangkap sebagai respon
   const lowerText = text.toLowerCase();
-  if (/(?:dapat membuat kesalahan|may not be accurate|for reference only|can make mistakes|ai-generated|one more step|verify important|consider checking|not always accurate|mimo-v2|bisa saja salah|harap verifikasi|periksa info penting)/i.test(lowerText)) return false;
+  if (/(?:dapat membuat kesalahan|may not be accurate|for reference only|can make mistakes|ai-generated|one more step|verify important|consider checking|not always accurate|mimo-v2|bisa saja salah|harap verifikasi|periksa info penting|citation sources|chat.*cowork|chatgpt bilang)/i.test(lowerText)) return false;
 
   return true;
 }
@@ -385,14 +385,18 @@ function cleanResultMarkdown(markdown) {
   if (!markdown) return "";
   let cleaned = markdown
     .replace(/[\u200B-\u200D\uFEFF]/g, "")
-    // Hapus header accessibility Claude
-    .replace(/^(?:#+\s*)?(?:Claude merespons:|Claude's response:|Claude:\s*)\s*/gi, "")
+    // Hapus header accessibility ChatGPT ("#### ChatGPT bilang:")
+    .replace(/^(?:#+\s*)?(?:ChatGPT bilang:|ChatGPT's response:|ChatGPT:|Anda bilang:[^\n]*)\s*/gim, "")
+    // Hapus header accessibility & navigation Claude ("Chat Cowork", "Claude merespons:", ikon private Unicode)
+    .replace(/^(?:#+\s*)?(?:Claude merespons:|Claude's response:|Claude:|Chat\s*Cowork|[\uE000-\uF8FF][^\n]*)\s*/gim, "")
     // Hapus header thinking Qwen, DeepSeek, ChatGPT, Claude, Gemini, Xiaomi MiMo, dll
-    .replace(/^(?:#+\s*)?(?:Thinking completed|Thinking process|Thought process|Finished thinking|Thinking|Menalar|Sedang berpikir|Berhenti berpikir|Stop thinking|已完成思考|思考过程)(?:\.{0,3}|…)?\s*(?:\n+|$)/gi, "")
-    .replace(/^(?:Berhenti berpikir|Stop thinking)\s*\n+/gi, "")
-    .replace(/^(?:Berpikir|Menalar)\s+selama\s+[^\n]+\n+/gi, "")
-    .replace(/^(?:Thought for\s+[^\n]+)\n+/gi, "")
-    .replace(/^(?:Thinking completed|Thinking process|Finished thinking)\s*/gi, "")
+    .replace(/^(?:#+\s*)?(?:Thinking completed|Thinking process|Thought process|Finished thinking|Thinking|Menalar|Sedang berpikir|Berhenti berpikir|Stop thinking|已完成思考|思考过程)(?:\.{0,3}|…)?\s*(?:\n+|$)/gim, "")
+    .replace(/^(?:Berhenti berpikir|Stop thinking)\s*\n+/gim, "")
+    .replace(/^(?:Berpikir|Menalar)\s+selama\s+[^\n]+\n+/gim, "")
+    .replace(/^(?:Thought for\s+[^\n]+)\n+/gim, "")
+    .replace(/^(?:Thinking completed|Thinking process|Finished thinking)\s*/gim, "")
+    // Hapus footer citation / source disclaimer ("Citation sources (0)")
+    .replace(/(?:\n|^)(?:Citation sources\s*\(\d+\)|Sources\s*\(\d+\)|Referensi\s*\(\d+\))[^\n]*$/gim, "")
     .replace(/\n{3,}/g, "\n\n");
   return cleaned.trim() || markdown.trim();
 }
