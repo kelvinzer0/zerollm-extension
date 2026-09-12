@@ -228,7 +228,7 @@ saveModelBtn.addEventListener("click", () => {
 
 // ── Reset to Presets ──────────────────────────────────────────────────
 resetPresetBtn.addEventListener("click", () => {
-  if (confirm("Reset to standard presets (ChatGPT, ChatSmith, Claude, Gemini)?")) {
+  if (confirm("Reset to full presets suite (ChatGPT, Claude, Gemini, DeepSeek, Grok, Perplexity, Kimi, Qwen, Doubao, GLM, Copilot, Mistral, Poe, ChatSmith, etc.)?")) {
     currentModels = [...DEFAULT_PRESETS];
     saveModelsToBackground(currentModels);
     renderModels(currentModels);

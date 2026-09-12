@@ -50,7 +50,19 @@ const activeRequests = new Map();
 async function loadModels() {
   const data = await chrome.storage.local.get(["customModels", "bridgeUrl", "roomId", "apiKey", "executionMode"]);
   if (data.customModels && Array.isArray(data.customModels) && data.customModels.length > 0) {
-    models = data.customModels;
+    // Preserve custom models & user edits, but auto-append newly introduced default presets
+    const existingIds = new Set(data.customModels.map(m => m.id));
+    let hasNew = false;
+    models = [...data.customModels];
+    for (const preset of DEFAULT_PRESETS) {
+      if (!existingIds.has(preset.id)) {
+        models.push({ ...preset });
+        hasNew = true;
+      }
+    }
+    if (hasNew) {
+      await chrome.storage.local.set({ customModels: models });
+    }
   } else {
     models = [...DEFAULT_PRESETS];
     await chrome.storage.local.set({ customModels: models });
@@ -223,9 +235,12 @@ async function getTabForModel(modelConfig) {
 
   // 3. Jika belum terbuka sama sekali -> OTOMATIS BUKA TAB BARU DI BACKGROUND
   console.log(`[ZeroLLM] No tab open for ${modelConfig.id}. Opening target URL automatically...`);
-  let targetUrl = modelConfig.urlPattern.replace(/\*/g, "");
-  if (!targetUrl.startsWith("http")) {
-    targetUrl = "https://" + targetUrl.replace(/^\/+/, "");
+  let targetUrl = modelConfig.defaultUrl;
+  if (!targetUrl) {
+    targetUrl = modelConfig.urlPattern.replace(/\*/g, "");
+    if (!targetUrl.startsWith("http")) {
+      targetUrl = "https://" + targetUrl.replace(/^\/+/, "");
+    }
   }
 
   const newTab = await chrome.tabs.create({
