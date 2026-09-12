@@ -314,34 +314,109 @@ async function handleBridgeMessage(msg) {
  * Mengonversi array pesan OpenAI (termasuk role: system, assistant, user)
  * menjadi satu kesatuan prompt utuh yang dipahami dan dipatuhi oleh Web AI chatbot.
  */
-function formatMessagesToPrompt(messages) {
+/**
+ * Ekstraksi pemanggilan tool standar OpenAI dari balasan model
+ */
+function parseToolCalls(text) {
+  if (!text || typeof text !== "string") return null;
+
+  // 1. Coba ekstrak blok ```json ... ```
+  const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  let candidate = jsonMatch ? jsonMatch[1].trim() : text.trim();
+
+  const firstBrace = candidate.indexOf("{");
+  const lastBrace = candidate.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    candidate = candidate.slice(firstBrace, lastBrace + 1);
+  }
+
+  try {
+    const parsed = JSON.parse(candidate);
+
+    // Format A: { "tool_calls": [ { "name": ..., "arguments": ... } ] }
+    if (Array.isArray(parsed.tool_calls) && parsed.tool_calls.length > 0) {
+      return parsed.tool_calls.map(tc => ({
+        id: tc.id || `call_${Math.random().toString(36).substring(2, 11)}`,
+        type: "function",
+        function: {
+          name: tc.name || tc.function?.name,
+          arguments: typeof tc.arguments === "string" 
+            ? tc.arguments 
+            : JSON.stringify(tc.arguments || tc.function?.arguments || {})
+        }
+      })).filter(tc => tc.function.name);
+    }
+
+    // Format B: { "name": "...", "arguments": { ... } }
+    if (parsed.name && (parsed.arguments !== undefined || parsed.parameters !== undefined)) {
+      return [{
+        id: parsed.id || `call_${Math.random().toString(36).substring(2, 11)}`,
+        type: "function",
+        function: {
+          name: parsed.name,
+          arguments: typeof (parsed.arguments || parsed.parameters) === "string"
+            ? (parsed.arguments || parsed.parameters)
+            : JSON.stringify(parsed.arguments || parsed.parameters || {})
+        }
+      }];
+    }
+  } catch (e) {
+    // Bukan JSON blok
+  }
+
+  return null;
+}
+
+/**
+ * Format messages dan tools dari format standar OpenAI Chat Completions
+ * menjadi satu kesatuan prompt utuh yang dipahami dan dipatuhi oleh Web AI chatbot.
+ */
+function formatMessagesToPrompt(messages, tools = []) {
   if (!Array.isArray(messages) || messages.length === 0) return "";
 
   // 1. Kumpulkan instruksi sistem
   const systemParts = messages
     .filter(m => m.role === "system" && m.content)
     .map(m => m.content.trim());
-  
+
+  // 2. Jika ada tools eksternal terdaftar, sertakan petunjuk pemanggilan tool
+  if (Array.isArray(tools) && tools.length > 0) {
+    let toolDirective = "Anda memiliki akses ke tool/fungsi berikut:\n";
+    tools.forEach((t, idx) => {
+      const fn = t.function || t;
+      const desc = fn.description ? `: ${fn.description}` : "";
+      const params = fn.parameters ? JSON.stringify(fn.parameters) : "{}";
+      toolDirective += `${idx + 1}. \`${fn.name}\`${desc}\n   Parameter JSON Schema: ${params}\n`;
+    });
+
+    toolDirective += "\n[PANDUAN PEMANGGILAN TOOL]:\n";
+    toolDirective += "Jika Anda perlu memanggil satu atau lebih tool di atas untuk melayani permintaan pengguna, respon HANYA dalam SATU blok kode JSON format berikut tanpa teks pembuka/penutup:\n";
+    toolDirective += "```json\n{\n  \"tool_calls\": [\n    {\n      \"name\": \"nama_tool\",\n      \"arguments\": { \"parameter\": \"nilai\" }\n    }\n  ]\n}\n```\n";
+    toolDirective += "Jika informasi sudah lengkap atau tidak memerlukan tool, responlah langsung secara normal dengan teks biasa.";
+
+    systemParts.push(toolDirective);
+  }
+
   const systemInstruction = systemParts.join("\n\n");
 
-  // 2. Kumpulkan percakapan non-sistem
-  const convo = messages.filter(m => m.role !== "system" && m.content);
+  // 3. Kumpulkan percakapan non-sistem
+  const convo = messages.filter(m => m.role !== "system");
 
   // Jika tidak ada percakapan non-sistem, kirim instruksi sistem saja
   if (convo.length === 0) {
     return systemInstruction;
   }
 
-  // Kasus umum: 1 pesan user (dengan atau tanpa system prompt)
+  // Kasus umum: 1 pesan user (dengan atau tanpa system prompt / tools)
   if (convo.length === 1 && convo[0].role === "user") {
-    const userPrompt = convo[0].content.trim();
+    const userPrompt = (convo[0].content || "").trim();
     if (systemInstruction) {
       return `(Petunjuk / System Directive: ${systemInstruction})\n\n${userPrompt}`;
     }
     return userPrompt;
   }
 
-  // Kasus multi-turn conversation: rangkai riwayat dialog agar model web memahami alur
+  // Kasus multi-turn conversation (bisa mencakup role: "tool" hasil eksekusi fungsi)
   let promptBuilder = "";
   if (systemInstruction) {
     promptBuilder += `(Petunjuk / System Directive: ${systemInstruction})\n\n`;
@@ -350,19 +425,36 @@ function formatMessagesToPrompt(messages) {
   promptBuilder += "[Riwayat Percakapan]\n";
   for (let i = 0; i < convo.length - 1; i++) {
     const msg = convo[i];
-    const roleLabel = msg.role === "assistant" ? "Assistant" : "User";
-    promptBuilder += `${roleLabel}: ${msg.content.trim()}\n\n`;
+    if (msg.role === "tool") {
+      const toolId = msg.name || msg.tool_call_id || "eksternal";
+      promptBuilder += `[Hasil Eksekusi Tool (${toolId})]:\n${(msg.content || "").trim()}\n\n`;
+    } else if (msg.role === "assistant") {
+      if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+        const callsStr = msg.tool_calls.map(tc => `${tc.function?.name || tc.name}(${tc.function?.arguments || JSON.stringify(tc.arguments || {})})`).join(", ");
+        promptBuilder += `Assistant [Memanggil Tool: ${callsStr}]\n\n`;
+      } else {
+        promptBuilder += `Assistant: ${(msg.content || "").trim()}\n\n`;
+      }
+    } else {
+      promptBuilder += `User: ${(msg.content || "").trim()}\n\n`;
+    }
   }
-  promptBuilder += "[Permintaan Pengguna Saat Ini]\n";
+
   const lastMsg = convo[convo.length - 1];
-  promptBuilder += `${lastMsg.content.trim()}`;
+  if (lastMsg.role === "tool") {
+    const toolId = lastMsg.name || lastMsg.tool_call_id || "eksternal";
+    promptBuilder += `[Hasil Eksekusi Tool (${toolId})]:\n${(lastMsg.content || "").trim()}\n\nJawablah permintaan awal pengguna berdasarkan hasil tool di atas:`;
+  } else {
+    promptBuilder += "[Permintaan Pengguna Saat Ini]\n";
+    promptBuilder += `${(lastMsg.content || "").trim()}`;
+  }
 
   return promptBuilder.trim();
 }
 
     let query = "";
     if (req.messages && Array.isArray(req.messages)) {
-      query = formatMessagesToPrompt(req.messages);
+      query = formatMessagesToPrompt(req.messages, req.tools);
     } else if (typeof req.prompt === "string") {
       query = req.prompt;
     } else if (typeof req.input === "string") {
@@ -523,9 +615,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     case "stream":
       sendToBridge({ type: "stream", requestId: msg.requestId, delta: msg.delta });
       break;
-    case "response":
-      sendToBridge({ type: "response", requestId: msg.requestId, content: msg.content, usage: msg.usage });
+    case "response": {
+      const toolCalls = parseToolCalls(msg.content);
+      if (toolCalls && toolCalls.length > 0) {
+        console.log(`[ZeroLLM ToolCalls] Detected ${toolCalls.length} tool calls in response:`, toolCalls);
+        sendToBridge({
+          type: "response",
+          requestId: msg.requestId,
+          content: null,
+          tool_calls: toolCalls,
+          finish_reason: "tool_calls",
+          usage: msg.usage
+        });
+      } else {
+        sendToBridge({
+          type: "response",
+          requestId: msg.requestId,
+          content: msg.content,
+          finish_reason: "stop",
+          usage: msg.usage
+        });
+      }
       break;
+    }
     case "streamError":
       sendToBridge({ type: "streamError", requestId: msg.requestId, error: msg.error });
       break;
