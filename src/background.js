@@ -26,9 +26,12 @@ let pingInterval = null;
 let models = [];
 // Active Model -> Tab ID mapping: Map<modelId, tabId>
 const modelTabMap = new Map();
-// Model Queue: Map<modelId, Array<pendingRequest>>
-const modelQueues = new Map();
-const isProcessingTab = new Map();
+// Global FIFO Queue untuk memproses prompt secara berurutan
+// Hal ini menjamin tab AI (seperti ChatGPT) tetap AKTIF selama generasi dan tidak terpotong oleh tab lain
+const globalQueue = [];
+let isProcessingGlobalQueue = false;
+// Map request aktif: Map<requestId, { resolve, reject, task, targetTabId, originalTabId }>
+const activeRequests = new Map();
 
 // ============================================================
 //  STORAGE & INITIALIZATION
@@ -475,74 +478,21 @@ function formatMessagesToPrompt(messages, tools = []) {
 //  REQUEST DISPATCH & QUEUE MANAGEMENT (MULTI-TAB)
 // ============================================================
 
-async function handleBridgeMessage(msg) {
-  if (msg.type === "ping") {
-    sendToBridge({ type: "pong" });
-    return;
-  }
-
-  if (msg.type === "completionRequest" || msg.type === "responsesRequest") {
-    const req = msg.request || {};
-    const modelId = req.model;
-    const modelConfig = models.find(m => m.id === modelId && m.enabled !== false);
-
-    if (!modelConfig) {
-      sendToBridge({
-        type: "streamError",
-        requestId: msg.requestId,
-        error: `Model '${modelId}' is not registered or enabled in ZeroLLM extension`
-      });
-      return;
-    }
-
-    let query = "";
-    if (req.messages && Array.isArray(req.messages)) {
-      query = formatMessagesToPrompt(req.messages, req.tools);
-    } else if (typeof req.prompt === "string") {
-      query = req.prompt;
-    } else if (typeof req.input === "string") {
-      query = req.input;
-    }
-
-    if (!modelQueues.has(modelId)) {
-      modelQueues.set(modelId, []);
-    }
-    modelQueues.get(modelId).push({
-      requestId: msg.requestId,
-      modelConfig,
-      query,
-      stream: req.stream !== false
-    });
-
-    processModelQueue(modelId);
-  }
-}
-
-async function processModelQueue(modelId) {
-  if (isProcessingTab.get(modelId)) return;
-  const queue = modelQueues.get(modelId);
-  if (!queue || queue.length === 0) return;
+// ============================================================
+//  NATIVE TYPING VIA CHROME DEVTOOLS PROTOCOL (CDP)
+// ============================================================
 
 /**
  * Menggunakan Chrome DevTools Protocol (CDP) via chrome.debugger untuk menyuntikkan
  * pengetikan teks dan penekanan tombol Enter tingkat hardware asli (isTrusted: true).
  * Bypasses all React Lexical / ProseMirror synthetic event barriers!
+ * Catatan: Fungsi ini TIDAK me-restore tab. Tab tetap aktif selama generasi!
  */
 async function nativeTypeAndSend(tabId, text, modelConfig) {
   const debuggee = { tabId };
   let attached = false;
-  let originalTabId = null;
 
   try {
-    // 0. Auto-Switch: Cek tab aktif saat ini. Jika berbeda dengan tab target, beralih sementara
-    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => []);
-    if (activeTab && activeTab.id !== tabId) {
-      originalTabId = activeTab.id;
-      console.log(`[ZeroLLM AutoSwitch] Switching focus from tab #${originalTabId} to #${tabId} for native typing...`);
-      await chrome.tabs.update(tabId, { active: true });
-      await new Promise(r => setTimeout(r, 200));
-    }
-
     // 1. Minta content script fokus ke input box terlebih dahulu & ambil initialCount
     const focusRes = await chrome.tabs.sendMessage(tabId, {
       type: "focusInput",
@@ -588,66 +538,161 @@ async function nativeTypeAndSend(tabId, text, modelConfig) {
         await chrome.debugger.detach(debuggee);
       } catch (e) {}
     }
-
-    // 5. Restore fokus ke tab awal setelah jeda aman (2.5 detik) agar proses submit selesai
-    if (originalTabId) {
-      setTimeout(async () => {
-        try {
-          console.log(`[ZeroLLM AutoSwitch] Restoring focus back to tab #${originalTabId}`);
-          await chrome.tabs.update(originalTabId, { active: true });
-        } catch (e) {}
-      }, 2500);
-    }
   }
 }
 
-  isProcessingTab.set(modelId, true);
-  const task = queue.shift();
+// ============================================================
+//  REQUEST DISPATCH & QUEUE MANAGEMENT (SEQUENTIAL TAB LOCK)
+// ============================================================
+
+async function handleBridgeMessage(msg) {
+  if (msg.type === "ping") {
+    sendToBridge({ type: "pong" });
+    return;
+  }
+
+  if (msg.type === "completionRequest" || msg.type === "responsesRequest") {
+    const req = msg.request || {};
+    const modelId = req.model;
+    const modelConfig = models.find(m => m.id === modelId && m.enabled !== false);
+
+    if (!modelConfig) {
+      sendToBridge({
+        type: "streamError",
+        requestId: msg.requestId,
+        error: `Model '${modelId}' is not registered or enabled in ZeroLLM extension`
+      });
+      return;
+    }
+
+    let query = "";
+    if (req.messages && Array.isArray(req.messages)) {
+      query = formatMessagesToPrompt(req.messages, req.tools);
+    } else if (typeof req.prompt === "string") {
+      query = req.prompt;
+    } else if (typeof req.input === "string") {
+      query = req.input;
+    }
+
+    globalQueue.push({
+      requestId: msg.requestId,
+      modelConfig,
+      query,
+      stream: req.stream !== false
+    });
+
+    processGlobalQueue();
+  }
+}
+
+async function processGlobalQueue() {
+  if (isProcessingGlobalQueue) return;
+  if (globalQueue.length === 0) return;
+
+  isProcessingGlobalQueue = true;
+  const task = globalQueue.shift();
+
+  let originalTabId = null;
+  let targetTabId = null;
 
   try {
-    // 1. Dapatkan atau buka tab otomatis
+    // 1. Dapatkan atau buka tab otomatis untuk model
     const tab = await getTabForModel(task.modelConfig);
     if (!tab) {
-      throw new Error(`Could not find or open tab for model '${modelId}' (${task.modelConfig.urlPattern})`);
+      throw new Error(`Could not find or open tab for model '${task.modelConfig.id}' (${task.modelConfig.urlPattern})`);
+    }
+    targetTabId = tab.id;
+
+    // 2. Cek tab aktif saat ini.
+    // Jika bukan tab target, beralih fokus ke tab target agar AI (khususnya ChatGPT) tidak dibekukan (throttled) oleh browser!
+    const [currentActive] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => []);
+    if (currentActive && currentActive.id !== targetTabId) {
+      originalTabId = currentActive.id;
+      console.log(`[ZeroLLM TabLock] Switching active tab from #${originalTabId} to target tab #${targetTabId} for model ${task.modelConfig.id}`);
+      await chrome.tabs.update(targetTabId, { active: true });
+      await new Promise(r => setTimeout(r, 250));
     }
 
-    // 2. Sambungkan kembali content script jika baru di-reload
-    await ensureContentScript(tab.id);
+    // 3. Sambungkan kembali content script jika perlu
+    await ensureContentScript(targetTabId);
 
-    // 3. Coba ketik & kirim secara native via Chrome Debugger (CDP)
-    const cdpResult = await nativeTypeAndSend(tab.id, task.query, task.modelConfig);
+    // 4. Eksekusi prompt dan TUNGGU hingga generasi respon SELESAI
+    await new Promise(async (resolve, reject) => {
+      const timeoutMs = 120000; // 2 menit timeout keamanan
+      const timer = setTimeout(() => {
+        activeRequests.delete(task.requestId);
+        reject(new Error(`Timeout waiting for AI response from model '${task.modelConfig.id}' after 120s`));
+      }, timeoutMs);
 
-    if (cdpResult.success) {
-      // 4a. Jika sukses via CDP, mulai observasi respon dari DOM
-      await chrome.tabs.sendMessage(tab.id, {
-        type: "waitForResponse",
-        requestId: task.requestId,
-        modelConfig: task.modelConfig,
-        query: task.query,
-        stream: task.stream,
-        initialCount: cdpResult.initialCount
+      activeRequests.set(task.requestId, {
+        task,
+        targetTabId,
+        resolve: (val) => {
+          clearTimeout(timer);
+          resolve(val);
+        },
+        reject: (err) => {
+          clearTimeout(timer);
+          reject(err);
+        }
       });
-    } else {
-      // 4b. Fallback: Eksekusi pengetikan dan submit via content script biasa
-      await chrome.tabs.sendMessage(tab.id, {
-        type: "executePrompt",
-        requestId: task.requestId,
-        modelConfig: task.modelConfig,
-        query: task.query,
-        stream: task.stream
-      });
-    }
+
+      try {
+        // Coba ketik secara native via Chrome Debugger (CDP)
+        const cdpResult = await nativeTypeAndSend(targetTabId, task.query, task.modelConfig);
+
+        if (cdpResult.success) {
+          // Observasi DOM
+          await chrome.tabs.sendMessage(targetTabId, {
+            type: "waitForResponse",
+            requestId: task.requestId,
+            modelConfig: task.modelConfig,
+            query: task.query,
+            stream: task.stream,
+            initialCount: cdpResult.initialCount
+          });
+        } else {
+          // Fallback DOM typing
+          await chrome.tabs.sendMessage(targetTabId, {
+            type: "executePrompt",
+            requestId: task.requestId,
+            modelConfig: task.modelConfig,
+            query: task.query,
+            stream: task.stream
+          });
+        }
+      } catch (err) {
+        clearTimeout(timer);
+        activeRequests.delete(task.requestId);
+        reject(err);
+      }
+    });
+
   } catch (err) {
-    console.error("[ZeroLLM] processModelQueue error:", err);
+    console.error(`[ZeroLLM] Error processing task ${task.requestId}:`, err);
     sendToBridge({
       type: "streamError",
       requestId: task.requestId,
-      error: err.message
+      error: err.message || "Failed to process prompt"
     });
   } finally {
-    isProcessingTab.set(modelId, false);
-    if (queue && queue.length > 0) {
-      processModelQueue(modelId);
+    activeRequests.delete(task.requestId);
+
+    // 5. Kembalikan tab ke originalTabId HANYA jika antrean sudah selesai (kosong)!
+    // Jika masih ada request berikutnya di antrean, tab model berikutnya akan langsung diaktifkan
+    if (globalQueue.length === 0 && originalTabId) {
+      try {
+        await new Promise(r => setTimeout(r, 600));
+        console.log(`[ZeroLLM TabLock] Generation complete. Restoring focus back to tab #${originalTabId}`);
+        await chrome.tabs.update(originalTabId, { active: true });
+      } catch (e) {}
+    }
+
+    isProcessingGlobalQueue = false;
+
+    // Lanjutkan memproses antrean berikutnya jika ada
+    if (globalQueue.length > 0) {
+      processGlobalQueue();
     }
   }
 }
@@ -683,11 +728,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           usage: msg.usage
         });
       }
+
+      // Beritahu queue processor bahwa generasi telah selesai tuntas
+      const active = activeRequests.get(msg.requestId);
+      if (active) {
+        active.resolve(msg);
+      }
       break;
     }
-    case "streamError":
+    case "streamError": {
       sendToBridge({ type: "streamError", requestId: msg.requestId, error: msg.error });
+      const active = activeRequests.get(msg.requestId);
+      if (active) {
+        active.reject(new Error(msg.error));
+      }
       break;
+    }
 
     case "getState":
       sendResponse({
