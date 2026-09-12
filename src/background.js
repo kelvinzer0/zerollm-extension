@@ -292,10 +292,61 @@ async function handleBridgeMessage(msg) {
       return;
     }
 
+/**
+ * Mengonversi array pesan OpenAI (termasuk role: system, assistant, user)
+ * menjadi satu kesatuan prompt utuh yang dipahami dan dipatuhi oleh Web AI chatbot.
+ */
+function formatMessagesToPrompt(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) return "";
+
+  // 1. Kumpulkan instruksi sistem
+  const systemParts = messages
+    .filter(m => m.role === "system" && m.content)
+    .map(m => m.content.trim());
+  
+  const systemInstruction = systemParts.join("\n\n");
+
+  // 2. Kumpulkan percakapan non-sistem
+  const convo = messages.filter(m => m.role !== "system" && m.content);
+
+  // Jika tidak ada percakapan non-sistem, kirim instruksi sistem saja
+  if (convo.length === 0) {
+    return systemInstruction;
+  }
+
+  // Kasus umum: 1 pesan user (dengan atau tanpa system prompt)
+  if (convo.length === 1 && convo[0].role === "user") {
+    const userPrompt = convo[0].content.trim();
+    if (systemInstruction) {
+      return `[SYSTEM INSTRUCTION]\n${systemInstruction}\n[/SYSTEM INSTRUCTION]\n\n${userPrompt}`;
+    }
+    return userPrompt;
+  }
+
+  // Kasus multi-turn conversation: rangkai riwayat dialog agar model web memahami alur
+  let promptBuilder = "";
+  if (systemInstruction) {
+    promptBuilder += `[SYSTEM INSTRUCTION]\n${systemInstruction}\n[/SYSTEM INSTRUCTION]\n\n`;
+  }
+
+  promptBuilder += "[CONVERSATION HISTORY]\n";
+  for (let i = 0; i < convo.length - 1; i++) {
+    const msg = convo[i];
+    const roleLabel = msg.role === "assistant" ? "Assistant" : "User";
+    promptBuilder += `${roleLabel}: ${msg.content.trim()}\n\n`;
+  }
+  promptBuilder += "[CURRENT USER REQUEST]\n";
+  const lastMsg = convo[convo.length - 1];
+  promptBuilder += `${lastMsg.content.trim()}`;
+
+  return promptBuilder.trim();
+}
+
     let query = "";
     if (req.messages && Array.isArray(req.messages)) {
-      const lastUser = [...req.messages].reverse().find(m => m.role === "user");
-      query = lastUser?.content || "";
+      query = formatMessagesToPrompt(req.messages);
+    } else if (typeof req.prompt === "string") {
+      query = req.prompt;
     } else if (typeof req.input === "string") {
       query = req.input;
     }
