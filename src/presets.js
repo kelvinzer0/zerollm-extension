@@ -35,7 +35,7 @@ export const DEFAULT_PRESETS = [
     continueChatSelector: "#prompt-textarea, textarea[id='prompt-textarea'], div#prompt-textarea, [data-testid='prompt-textarea'], #mobile-composer-prompt, textarea[id*='composer'], textarea[placeholder], textarea, [contenteditable='true']",
     streamSelector: "button[data-testid='stop-button'], button[aria-label*='Berhenti'], button[aria-label*='Stop'], button.bg-black .icon-lg, [data-testid='fruitjuice-send-button']:has(svg path[d*='M2 12'])",
     doneSelector: "button[data-testid='send-button']:not([disabled]), button.wm-composer-submitButton:not([disabled]), button[aria-label*='Kirim']:not([disabled]), button[aria-label*='Send']:not([disabled])",
-    resultContainerSelector: "div[data-message-author-role='assistant'] .markdown, div[data-message-author-role='assistant'], article:has([data-message-author-role='assistant'])",
+    resultContainerSelector: "div[data-message-author-role='assistant'] .markdown, div[data-message-author-role='assistant']",
     description: "Official OpenAI ChatGPT Web Interface (GPT-4o, o1, o3-mini)"
   },
   {
@@ -44,13 +44,13 @@ export const DEFAULT_PRESETS = [
     enabled: true,
     defaultUrl: "https://chatsmith.io",
     urlPattern: "*://chatsmith.io/*",
-    responseScope: "main, [class*='chat-area'], [class*='message-list'], [class*='conversation'], [class*='chat-body']",
+    responseScope: "main, [class*='content-layout'], [class*='chat-area'], [class*='message-list'], [class*='conversation'], [class*='chat-body']",
     newChatSelector: "[aria-label*='New chat'], .new-chat-btn, a[href='/conversation'], button:has(svg path[d*='M12 4'])",
     startChatSelector: "[contenteditable='true'], div.ProseMirror, textarea, [aria-label*='Chat Smith'], [placeholder*='Talk with Chat Smith']",
     continueChatSelector: "[contenteditable='true'], div.ProseMirror, textarea, [aria-label*='Chat Smith'], [placeholder*='Talk with Chat Smith']",
     streamSelector: "button[aria-label*='Stop'], button.stop-button, .streaming, .typing-indicator, [class*='stop'], button:has([class*='stop'])",
     doneSelector: "button[aria-label*='Send']:not([disabled]), form button[type='submit']:not([disabled]), .send-button:not([disabled]), button.send-btn:not([disabled])",
-    resultContainerSelector: ".message-ai .content, .chat-bubble-bot .text, .assistant-message, .message-content, [class*='bot-message'], [class*='ai-message'], .markdown",
+    resultContainerSelector: "div.prose, .prose, [class*='styles_tableMarkdown'], .message-ai .content, .chat-bubble-bot .text, .assistant-message, .message-content, [class*='bot-message'], [class*='ai-message'], .markdown",
     description: "ChatSmith Web AI Interface (Verified Live)"
   },
   {
@@ -149,13 +149,13 @@ export const DEFAULT_PRESETS = [
     enabled: true,
     defaultUrl: "https://chat.qwen.ai",
     urlPattern: "*://*.qwen.ai/*",
-    responseScope: "main, [role='main'], [class*='chat-container'], [class*='conversation'], [class*='message-list']",
+    responseScope: "main, [role='main'], [class*='chat-messages-container'], [class*='chat-messages'], [class*='chat-container'], [class*='conversation'], [class*='message-list']",
     newChatSelector: "[aria-label*='新建对话'], [aria-label*='New chat'], button:has-text('新建对话'), button:has-text('New chat')",
-    startChatSelector: "textarea[placeholder*='问问'], textarea[placeholder*='Type a message'], textarea[placeholder*='Ask'], textarea, [contenteditable='true']",
-    continueChatSelector: "textarea[placeholder*='问问'], textarea[placeholder*='Type a message'], textarea[placeholder*='Ask'], textarea, [contenteditable='true']",
+    startChatSelector: "textarea.message-input-textarea, textarea[placeholder*='问问'], textarea[placeholder*='Ask'], textarea, [contenteditable='true']",
+    continueChatSelector: "textarea.message-input-textarea, textarea[placeholder*='问问'], textarea[placeholder*='Ask'], textarea, [contenteditable='true']",
     streamSelector: "button[class*='stop'], button:has([class*='stop']), [aria-label*='停止生成'], button[aria-label*='Stop'], button[aria-label*='Berhenti']",
-    doneSelector: "button[class*='send']:not([disabled]), button[type='submit']:not([disabled]), button[aria-label*='Send']:not([disabled])",
-    resultContainerSelector: ".qwen-markdown, [class*='qwen-markdown'], div[class*='contentBlock']:not([class*='user']), div[class*='chat-message']:not([class*='user']) .markdown, div:has(> button[aria-label*='Copy'], button[title*='Copy'])",
+    doneSelector: "button.send-button:not([disabled]), button[class*='send']:not([disabled]), button[type='submit']:not([disabled]), button[aria-label*='Send']:not([disabled])",
+    resultContainerSelector: ".qwen-chat-message-assistant .qwen-markdown, .qwen-chat-message-assistant, .qwen-markdown, [class*='qwen-markdown'], div[class*='contentBlock']:not([class*='user']), div[class*='chat-message']:not([class*='user']) .markdown",
     description: "Alibaba Tongyi Qwen AI Web Interface (Qwen 2.5 / Max)"
   },
   {
