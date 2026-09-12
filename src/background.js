@@ -336,7 +336,7 @@ function formatMessagesToPrompt(messages) {
   if (convo.length === 1 && convo[0].role === "user") {
     const userPrompt = convo[0].content.trim();
     if (systemInstruction) {
-      return `[SYSTEM INSTRUCTION]\n${systemInstruction}\n[/SYSTEM INSTRUCTION]\n\n${userPrompt}`;
+      return `(Petunjuk / System Directive: ${systemInstruction})\n\n${userPrompt}`;
     }
     return userPrompt;
   }
@@ -344,16 +344,16 @@ function formatMessagesToPrompt(messages) {
   // Kasus multi-turn conversation: rangkai riwayat dialog agar model web memahami alur
   let promptBuilder = "";
   if (systemInstruction) {
-    promptBuilder += `[SYSTEM INSTRUCTION]\n${systemInstruction}\n[/SYSTEM INSTRUCTION]\n\n`;
+    promptBuilder += `(Petunjuk / System Directive: ${systemInstruction})\n\n`;
   }
 
-  promptBuilder += "[CONVERSATION HISTORY]\n";
+  promptBuilder += "[Riwayat Percakapan]\n";
   for (let i = 0; i < convo.length - 1; i++) {
     const msg = convo[i];
     const roleLabel = msg.role === "assistant" ? "Assistant" : "User";
     promptBuilder += `${roleLabel}: ${msg.content.trim()}\n\n`;
   }
-  promptBuilder += "[CURRENT USER REQUEST]\n";
+  promptBuilder += "[Permintaan Pengguna Saat Ini]\n";
   const lastMsg = convo[convo.length - 1];
   promptBuilder += `${lastMsg.content.trim()}`;
 
