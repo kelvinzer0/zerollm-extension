@@ -394,6 +394,50 @@ function parseToolCalls(text) {
     });
   }
 
+  // Pola 1b: <tool_call>{"name": "...", "arguments": {...}}</tool_call>
+  if (calls.length === 0) {
+    const xmlToolRegex = /<tool_call[^>]*>([\s\S]*?)<\/tool_call>/gi;
+    while ((match = xmlToolRegex.exec(text)) !== null) {
+      try {
+        const obj = JSON.parse(match[1].trim());
+        const fnName = obj.name || obj.tool;
+        const args = obj.arguments || obj.parameters || {};
+        if (fnName) {
+          calls.push({
+            id: obj.id || `call_${Math.random().toString(36).substring(2, 10)}`,
+            type: "function",
+            function: {
+              name: fnName,
+              arguments: typeof args === "string" ? args : JSON.stringify(args)
+            }
+          });
+        }
+      } catch(e) {}
+    }
+  }
+
+  // Pola 1c: ```tool_json\n{"tool":"...", "parameters":{...}}\n```
+  if (calls.length === 0) {
+    const toolJsonRegex = /```(?:tool_json|tool)\s*\n?([\s\S]*?)\n?```/gi;
+    while ((match = toolJsonRegex.exec(text)) !== null) {
+      try {
+        const obj = JSON.parse(match[1].trim());
+        const fnName = obj.tool || obj.name;
+        const args = obj.parameters || obj.arguments || {};
+        if (fnName) {
+          calls.push({
+            id: obj.id || `call_${Math.random().toString(36).substring(2, 10)}`,
+            type: "function",
+            function: {
+              name: fnName,
+              arguments: typeof args === "string" ? args : JSON.stringify(args)
+            }
+          });
+        }
+      } catch(e) {}
+    }
+  }
+
   // Pola 2 (Alternatif): [ACTION: nama_fungsi({"param": "nilai"})]
   if (calls.length === 0) {
     const bracketRegex = /\[(?:ACTION|PANGGIL_FUNGSI|TOOL|CALL):\s*([\w_-]+)\(([\s\S]*?)\)\]/gi;
@@ -441,6 +485,19 @@ function parseToolCalls(text) {
         })).filter(tc => tc.function.name);
       }
 
+      if (parsed.tool && (parsed.parameters !== undefined || parsed.arguments !== undefined)) {
+        return [{
+          id: parsed.id || `call_${Math.random().toString(36).substring(2, 10)}`,
+          type: "function",
+          function: {
+            name: parsed.tool,
+            arguments: typeof (parsed.parameters || parsed.arguments) === "string"
+              ? (parsed.parameters || parsed.arguments)
+              : JSON.stringify(parsed.parameters || parsed.arguments || {})
+          }
+        }];
+      }
+
       if (parsed.name && (parsed.arguments !== undefined || parsed.parameters !== undefined)) {
         return [{
           id: parsed.id || `call_${Math.random().toString(36).substring(2, 10)}`,
@@ -471,9 +528,9 @@ function formatMessagesToPrompt(messages, tools = []) {
     .filter(m => m.role === "system" && m.content)
     .map(m => m.content.trim());
 
-  // 2. Jika ada tools eksternal terdaftar, lapisi dengan format tindakan aman bebas konflik
+  // 2. Jika ada tools eksternal terdaftar, lapisi dengan instruksi ketat
   if (Array.isArray(tools) && tools.length > 0) {
-    let toolDirective = "Fungsi tindakan eksternal yang tersedia:\n";
+    let toolDirective = "Fungsi/Tools eksternal yang tersedia:\n";
     tools.forEach((t, idx) => {
       const fn = t.function || t;
       const desc = fn.description ? ` (${fn.description})` : "";
@@ -484,10 +541,12 @@ function formatMessagesToPrompt(messages, tools = []) {
       toolDirective += `${idx + 1}. ${fn.name}(${params})${desc}\n`;
     });
 
-    toolDirective += "\nAturan Pemanggilan Tindakan:\n";
-    toolDirective += "Jika Anda membutuhkan fungsi di atas untuk menjawab permintaan pengguna, balas HANYA dengan format tindakan berikut:\n";
+    toolDirective += "\n[ATURAN PEMANGGILAN TOOL / FUNCTION CALLING]\n";
+    toolDirective += "Jika permintaan pengguna membutuhkan informasi eksternal, cuaca, waktu, atau fungsi di atas:\n";
+    toolDirective += "Anda WAJIB memanggil fungsinya dan HANYA membalas dengan blok format berikut tanpa teks pembuka/penutup lainnya:\n";
     toolDirective += "<action name=\"nama_fungsi\">{\"parameter\": \"nilai\"}</action>\n";
-    toolDirective += "Jika tidak memerlukan fungsi, berikan jawaban langsung seperti biasa.";
+    toolDirective += "Contoh jika butuh fungsi get_current_weather:\n";
+    toolDirective += "<action name=\"get_current_weather\">{\"location\": \"Tokyo\", \"unit\": \"celsius\"}</action>";
 
     systemParts.push(toolDirective);
   }
