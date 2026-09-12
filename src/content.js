@@ -262,6 +262,69 @@ function getResponseContainers(modelConfig) {
   return [];
 }
 
+/**
+ * DOM Diffing & Positional Turn Tracker:
+ * Menemukan respon asisten dengan mencari elemen yang muncul tepat SETELAH teks prompt user
+ * dalam urutan DOM percakapan.
+ */
+function findAssistantResponseByDOMDiff(query, modelConfig) {
+  if (!query || typeof query !== "string") return null;
+
+  // Cuplikan teks query pengguna untuk pencocokan (ambil 35 karakter pertama yang unik)
+  const cleanQ = query.replace(/[\u200B-\u200D\uFEFF\s]/g, "").toLowerCase();
+  const sample = cleanQ.slice(0, Math.min(cleanQ.length, 35));
+  if (!sample) return null;
+
+  // 1. Cari elemen teks di chat body yang memuat teks prompt user
+  const candidates = Array.from(document.querySelectorAll("p, div, article, span, li"));
+  let userTurnEl = null;
+
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    const el = candidates[i];
+    // Abaikan area composer/input
+    if (el.closest("form, #prompt-textarea, [contenteditable='true'], textarea, [role='textbox'], footer")) continue;
+    
+    const text = (el.innerText || el.textContent || "").replace(/[\u200B-\u200D\uFEFF\s]/g, "").toLowerCase();
+    if (text.includes(sample)) {
+      // Temukan kontainer turn pembungkus
+      userTurnEl = el.closest("article, [data-testid*='message'], [class*='message'], [class*='turn'], [class*='row'], [class*='item']") || el;
+      break;
+    }
+  }
+
+  if (userTurnEl) {
+    // 2. Cari elemen asisten yang berada SETELAH userTurnEl di dalam DOM
+    let nextNode = userTurnEl.nextElementSibling;
+    while (nextNode) {
+      if (isValidResponseElement(nextNode)) {
+        return nextNode;
+      }
+      const innerMessage = nextNode.querySelector("article, [class*='message'], .markdown, div");
+      if (innerMessage && isValidResponseElement(innerMessage)) {
+        return innerMessage;
+      }
+      nextNode = nextNode.nextElementSibling;
+    }
+
+    // Cek parent level jika turn user dibungkus dalam wrapper div
+    let parent = userTurnEl.parentElement;
+    while (parent && parent !== document.body && parent.tagName.toLowerCase() !== "main") {
+      if (parent.nextElementSibling) {
+        let sibling = parent.nextElementSibling;
+        while (sibling) {
+          if (isValidResponseElement(sibling)) return sibling;
+          const inner = sibling.querySelector("article, [class*='message'], .markdown, div");
+          if (inner && isValidResponseElement(inner)) return inner;
+          sibling = sibling.nextElementSibling;
+        }
+      }
+      parent = parent.parentElement;
+    }
+  }
+
+  return null;
+}
+
 function checkIsDone(modelConfig) {
   if (!modelConfig.doneSelector) return false;
   const el = findElementByPattern(modelConfig.doneSelector);
@@ -446,10 +509,16 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
 
     const interval = setInterval(() => {
       pollCount++;
+      // 1. DOM Positional Diffing: cari elemen respon yang berada setelah user prompt
+      const diffEl = findAssistantResponseByDOMDiff(query, modelConfig);
+
+      // 2. Standard selector containers
       const currentContainers = getResponseContainers(modelConfig);
-      
       const hasNewContainer = currentContainers.length > initialCount;
-      const latestResponseEl = currentContainers.length > 0 ? currentContainers[currentContainers.length - 1] : null;
+      const latestSelectorEl = currentContainers.length > 0 ? currentContainers[currentContainers.length - 1] : null;
+
+      // Prioritaskan elemen yang ditemukan lewat DOM diffing tepat setelah user prompt
+      const latestResponseEl = diffEl || latestSelectorEl;
 
       const rawHtml = latestResponseEl ? latestResponseEl.innerHTML : "";
       const isStreaming = checkIsStreaming(modelConfig);
@@ -460,7 +529,7 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
       // Cek apakah konten ini teks baru dari generasi saat ini
       const isTextDifferent = (!initialText && meaningfulMarkdown.length > 0) || 
                               (Boolean(initialText) && meaningfulMarkdown !== initialText && (!meaningfulMarkdown.startsWith(initialText) || meaningfulMarkdown.length > initialText.length + 5));
-      const isNewResponse = hasNewContainer || isTextDifferent;
+      const isNewResponse = Boolean(diffEl) || hasNewContainer || isTextDifferent;
       const hasMeaningfulText = meaningfulMarkdown.replace(/[`\s]/g, "").length > 0;
 
       // Filter out user message reflections (jangan anggap teks prompt sebagai jawaban)
