@@ -639,57 +639,42 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   // Prepare input element and focus before Chrome Debugger CDP typing
   if (msg.type === "focusInput") {
-    // 1. Tutup modal/banner promosi atau dialog error yang menghalangi
-    const dismissBtns = document.querySelectorAll("button[aria-label='Tutup'], button[aria-label='Close'], button[aria-label='Kembali ke ChatGPT'], button:has(svg path[d*='M18 6L6 18'])");
-    dismissBtns.forEach(btn => { try { btn.click(); } catch(e) {} });
+    (async () => {
+      // 1. Tutup modal/banner promosi atau dialog error yang menghalangi
+      const dismissBtns = document.querySelectorAll("button[aria-label='Tutup'], button[aria-label='Close'], button[aria-label='Kembali ke ChatGPT'], button:has(svg path[d*='M18 6L6 18'])");
+      dismissBtns.forEach(btn => { try { btn.click(); } catch(e) {} });
 
-    let inputEl = findElementByPattern(msg.modelConfig?.continueChatSelector) || 
+      // 2. Tunggu input element selesai dimuat / dihidrasi SPA (hingga 12 detik)
+      let inputEl = null;
+      for (let i = 0; i < 24; i++) {
+        inputEl = findElementByPattern(msg.modelConfig?.continueChatSelector) || 
                   findElementByPattern(msg.modelConfig?.startChatSelector) ||
                   document.querySelector("#prompt-textarea, #mobile-composer-prompt, textarea, [contenteditable='true']");
-
-    // 2. Jika input tidak ditemukan, form disabled, atau chat macet: klik tombol Obrolan Baru
-    if (msg.forceNewChat || !inputEl || inputEl.disabled || inputEl.getAttribute("aria-disabled") === "true") {
-      const newChatSel = msg.modelConfig?.newChatSelector || "a[href='/'], [data-testid='new-chat-button'], [aria-label*='Obrolan baru'], [aria-label*='New chat'], [aria-label*='Percakapan baru']";
-      const newChatBtn = findElementByPattern(newChatSel);
-      if (newChatBtn) {
-        try { newChatBtn.click(); } catch(e) {}
-      } else if (window.location.pathname.startsWith("/c/")) {
-        window.location.href = "/";
-      }
-
-      setTimeout(() => {
-        let freshInput = findElementByPattern(msg.modelConfig?.startChatSelector) ||
-                         document.querySelector("#prompt-textarea, #mobile-composer-prompt, textarea, [contenteditable='true']");
-        if (freshInput) {
-          freshInput.focus();
-          const prevContainers = getResponseContainers(msg.modelConfig);
-          const lastEl = prevContainers.length > 0 ? prevContainers[prevContainers.length - 1] : null;
-          const initialText = lastEl ? cleanResultMarkdown(cleanHtmlToMarkdown(lastEl.innerHTML || lastEl)) : "";
-          sendResponse({ success: true, initialCount: prevContainers.length, initialText });
-        } else {
-          sendResponse({ success: false, error: "Input not found after New Chat" });
+        
+        if (inputEl && !inputEl.disabled && inputEl.getAttribute("aria-disabled") !== "true") {
+          break;
         }
-      }, 600);
-      return true;
-    }
-
-    if (inputEl) {
-      inputEl.focus();
-      // Bersihkan teks lama sebelum pengetikan teks baru agar tidak bertumpuk
-      if (inputEl.isContentEditable) {
-        document.execCommand("selectAll", false, null);
-        document.execCommand("delete", false, null);
-      } else {
-        inputEl.value = "";
-        inputEl.dispatchEvent(new Event("input", { bubbles: true }));
+        await new Promise(r => setTimeout(r, 500));
       }
-      const prevContainers = getResponseContainers(msg.modelConfig);
-      const lastEl = prevContainers.length > 0 ? prevContainers[prevContainers.length - 1] : null;
-      const initialText = lastEl ? cleanResultMarkdown(cleanHtmlToMarkdown(lastEl.innerHTML || lastEl)) : "";
-      sendResponse({ success: true, initialCount: prevContainers.length, initialText });
-    } else {
-      sendResponse({ success: false, error: "Input not found" });
-    }
+
+      if (inputEl) {
+        inputEl.focus();
+        // Bersihkan teks lama sebelum pengetikan teks baru agar tidak bertumpuk
+        if (inputEl.isContentEditable) {
+          document.execCommand("selectAll", false, null);
+          document.execCommand("delete", false, null);
+        } else {
+          inputEl.value = "";
+          inputEl.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        const prevContainers = getResponseContainers(msg.modelConfig);
+        const lastEl = prevContainers.length > 0 ? prevContainers[prevContainers.length - 1] : null;
+        const initialText = lastEl ? cleanResultMarkdown(cleanHtmlToMarkdown(lastEl.innerHTML || lastEl)) : "";
+        sendResponse({ success: true, initialCount: prevContainers.length, initialText });
+      } else {
+        sendResponse({ success: false, error: "Input not found or still loading after 12s" });
+      }
+    })();
     return true;
   }
 

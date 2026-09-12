@@ -274,6 +274,48 @@ async function getTabForModel(modelConfig) {
 }
 
 /**
+ * Menunggu hingga tab selesai dimuat sepenuhnya (status === 'complete')
+ * Mencegah pengiriman prompt saat halaman web masih dalam proses loading / navigating!
+ */
+async function waitForTabComplete(tabId, maxWaitMs = 15000) {
+  try {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab || tab.status === "complete") {
+      return true;
+    }
+  } catch (e) {
+    return false;
+  }
+
+  console.log(`[ZeroLLM] Tab #${tabId} is currently loading. Waiting for page load to finish...`);
+
+  return new Promise(resolve => {
+    let resolved = false;
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        chrome.tabs.onUpdated.removeListener(listener);
+        console.log(`[ZeroLLM] Tab #${tabId} load wait timeout after ${maxWaitMs}ms, proceeding...`);
+        resolve(false);
+      }
+    }, maxWaitMs);
+
+    const listener = (tid, changeInfo) => {
+      if (tid === tabId && changeInfo.status === "complete") {
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(timer);
+          chrome.tabs.onUpdated.removeListener(listener);
+          console.log(`[ZeroLLM] Tab #${tabId} finished loading!`);
+          resolve(true);
+        }
+      }
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+  });
+}
+
+/**
  * Memastikan content script siap merespon perintah
  */
 async function ensureContentScript(tabId) {
@@ -802,6 +844,10 @@ async function processParallelModelQueue(modelId) {
     // 2. Pastikan tab aktif di window miliknya
     await chrome.tabs.update(targetTabId, { active: true }).catch(() => {});
 
+    // Tunggu tab selesai dimuat sepenuhnya sebelum menyuntikkan prompt
+    await waitForTabComplete(targetTabId, 15000);
+    await new Promise(r => setTimeout(r, 600));
+
     // 3. Sambungkan kembali content script jika perlu
     await ensureContentScript(targetTabId);
 
@@ -899,6 +945,10 @@ async function processGlobalQueue() {
       await chrome.tabs.update(targetTabId, { active: true });
       await new Promise(r => setTimeout(r, 250));
     }
+
+    // Tunggu tab selesai dimuat sepenuhnya sebelum menyuntikkan prompt
+    await waitForTabComplete(targetTabId, 15000);
+    await new Promise(r => setTimeout(r, 600));
 
     // 3. Sambungkan kembali content script jika perlu
     await ensureContentScript(targetTabId);
