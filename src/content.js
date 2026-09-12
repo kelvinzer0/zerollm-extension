@@ -372,14 +372,37 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   // Prepare input element and focus before Chrome Debugger CDP typing
   if (msg.type === "focusInput") {
-    const dismissBtn = document.querySelector("button[aria-label='Tutup'], button[aria-label='Close'], button[aria-label='Kembali ke ChatGPT'], button:has(svg path[d*='M18 6L6 18'])");
-    if (dismissBtn) {
-      try { dismissBtn.click(); } catch(e) {}
-    }
+    // 1. Tutup modal/banner promosi atau dialog error yang menghalangi
+    const dismissBtns = document.querySelectorAll("button[aria-label='Tutup'], button[aria-label='Close'], button[aria-label='Kembali ke ChatGPT'], button:has(svg path[d*='M18 6L6 18'])");
+    dismissBtns.forEach(btn => { try { btn.click(); } catch(e) {} });
 
     let inputEl = findElementByPattern(msg.modelConfig?.continueChatSelector) || 
                   findElementByPattern(msg.modelConfig?.startChatSelector) ||
                   document.querySelector("#prompt-textarea, #mobile-composer-prompt, textarea, [contenteditable='true']");
+
+    // 2. Jika input tidak ditemukan, form disabled, atau chat macet: klik tombol Obrolan Baru
+    if (msg.forceNewChat || !inputEl || inputEl.disabled || inputEl.getAttribute("aria-disabled") === "true") {
+      const newChatSel = msg.modelConfig?.newChatSelector || "a[href='/'], [data-testid='new-chat-button'], [aria-label*='Obrolan baru'], [aria-label*='New chat'], [aria-label*='Percakapan baru']";
+      const newChatBtn = findElementByPattern(newChatSel);
+      if (newChatBtn) {
+        try { newChatBtn.click(); } catch(e) {}
+      } else if (window.location.pathname.startsWith("/c/")) {
+        window.location.href = "/";
+      }
+
+      setTimeout(() => {
+        let freshInput = findElementByPattern(msg.modelConfig?.startChatSelector) ||
+                         document.querySelector("#prompt-textarea, #mobile-composer-prompt, textarea, [contenteditable='true']");
+        if (freshInput) {
+          freshInput.focus();
+          const prevContainers = getResponseContainers(msg.modelConfig);
+          sendResponse({ success: true, initialCount: prevContainers.length });
+        } else {
+          sendResponse({ success: false, error: "Input not found after New Chat" });
+        }
+      }, 600);
+      return true;
+    }
 
     if (inputEl) {
       inputEl.focus();

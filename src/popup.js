@@ -9,6 +9,7 @@ const modelCountBadge = document.getElementById("modelCountBadge");
 // Form elements
 const mId = document.getElementById("mId");
 const mUrl = document.getElementById("mUrl");
+const mNewChat = document.getElementById("mNewChat");
 const mStart = document.getElementById("mStart");
 const mContinue = document.getElementById("mContinue");
 const mStream = document.getElementById("mStream");
@@ -86,6 +87,7 @@ function renderModels(models) {
       const m = currentModels[idx];
       mId.value = m.id || "";
       mUrl.value = m.urlPattern || "";
+      mNewChat.value = m.newChatSelector || "";
       mStart.value = m.startChatSelector || "";
       mContinue.value = m.continueChatSelector || "";
       mStream.value = m.streamSelector || "";
@@ -139,6 +141,7 @@ function saveModelsToBackground(newModels) {
 saveModelBtn.addEventListener("click", () => {
   const modelId = mId.value.trim();
   const urlPattern = mUrl.value.trim();
+  const newChatSel = mNewChat.value.trim();
   const startChat = mStart.value.trim();
   const continueChat = mContinue.value.trim();
   const streamSel = mStream.value.trim();
@@ -156,6 +159,7 @@ saveModelBtn.addEventListener("click", () => {
     name: modelId,
     enabled: true,
     urlPattern,
+    newChatSelector: newChatSel,
     startChatSelector: startChat,
     continueChatSelector: continueChat,
     streamSelector: streamSel,
