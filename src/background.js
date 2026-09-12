@@ -396,14 +396,25 @@ async function processModelQueue(modelId) {
 async function nativeTypeAndSend(tabId, text, modelConfig) {
   const debuggee = { tabId };
   let attached = false;
+  let originalTabId = null;
+
   try {
+    // 0. Auto-Switch: Cek tab aktif saat ini. Jika berbeda dengan tab target, beralih sementara
+    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => []);
+    if (activeTab && activeTab.id !== tabId) {
+      originalTabId = activeTab.id;
+      console.log(`[ZeroLLM AutoSwitch] Switching focus from tab #${originalTabId} to #${tabId} for native typing...`);
+      await chrome.tabs.update(tabId, { active: true });
+      await new Promise(r => setTimeout(r, 200));
+    }
+
     // 1. Minta content script fokus ke input box terlebih dahulu & ambil initialCount
     const focusRes = await chrome.tabs.sendMessage(tabId, {
       type: "focusInput",
       modelConfig
     }).catch(() => null);
 
-    await new Promise(r => setTimeout(r, 250));
+    await new Promise(r => setTimeout(r, 150));
 
     // 2. Attach Chrome Debugger
     await chrome.debugger.attach(debuggee, "1.3");
@@ -411,7 +422,7 @@ async function nativeTypeAndSend(tabId, text, modelConfig) {
 
     // 3. Ketikkan teks menggunakan Input.insertText (native keyboard event)
     await chrome.debugger.sendCommand(debuggee, "Input.insertText", { text });
-    await new Promise(r => setTimeout(r, 200));
+    await new Promise(r => setTimeout(r, 150));
 
     // 4. Tekan tombol Enter menggunakan Input.dispatchKeyEvent (rawKeyDown + keyUp)
     await chrome.debugger.sendCommand(debuggee, "Input.dispatchKeyEvent", {
@@ -437,6 +448,16 @@ async function nativeTypeAndSend(tabId, text, modelConfig) {
       try {
         await chrome.debugger.detach(debuggee);
       } catch (e) {}
+    }
+
+    // 5. Instant Restore: Kembalikan fokus ke tab awal pengguna agar browsing tidak terganggu
+    if (originalTabId) {
+      setTimeout(async () => {
+        try {
+          console.log(`[ZeroLLM AutoSwitch] Restoring focus back to tab #${originalTabId}`);
+          await chrome.tabs.update(originalTabId, { active: true });
+        } catch (e) {}
+      }, 250);
     }
   }
 }

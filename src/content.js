@@ -395,8 +395,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "waitForResponse") {
     const { requestId, modelConfig, query, stream, initialCount } = msg;
 
-    // Cek tombol submit jika ada yang perlu diklik
-    const submitBtn = document.querySelector("button.wm-composer-submitButton:not([disabled]), button[data-testid='send-button']:not([disabled]), button[aria-label*='Kirim']:not([disabled]), button[aria-label*='Send']:not([disabled])");
+    // Cek tombol submit jika ada yang perlu diklik (cadangan jika event Enter belum terpicu)
+    let submitBtn = null;
+    if (modelConfig?.doneSelector) {
+      submitBtn = findElementByPattern(modelConfig.doneSelector);
+    }
+    if (!submitBtn) {
+      submitBtn = document.querySelector("button.wm-composer-submitButton:not([disabled]), button[data-testid='send-button']:not([disabled]), button[aria-label*='Kirim']:not([disabled]), button[aria-label*='Send']:not([disabled]), button[type='submit']:not([disabled]), .send-button:not([disabled])");
+    }
     if (submitBtn && !submitBtn.disabled) {
       try { submitBtn.click(); } catch(e) {}
     }
