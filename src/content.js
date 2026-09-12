@@ -214,10 +214,17 @@ async function enterPrompt(inputEl, text) {
 
   await new Promise(r => setTimeout(r, 400));
 
+  // Dismiss any blocking dialogs/overlays if present (e.g. login prompts, welcome modals)
+  const dismissBtn = document.querySelector("button[aria-label='Tutup'], button[aria-label='Close'], button[aria-label='Kembali ke ChatGPT'], button:has(svg path[d*='M18 6L6 18'])");
+  if (dismissBtn) {
+    try { dismissBtn.click(); } catch(e) {}
+    await new Promise(r => setTimeout(r, 300));
+  }
+
   // Find and click submit button
   const form = inputEl.closest("form");
-  const submitBtn = form ? form.querySelector("button[type='submit']") : 
-                   document.querySelector("button[data-testid='send-button'], button[data-testid='fruitjuice-send-button'], button[aria-label*='Send'], button[aria-label*='Kirim']");
+  const submitBtn = (form ? form.querySelector("button[type='submit']") : null) || 
+                   document.querySelector("button[data-testid='send-button'], button[data-testid='fruitjuice-send-button'], button[aria-label*='Send'], button[aria-label*='Kirim'], button[aria-label*='prompt']");
 
   if (submitBtn && !submitBtn.disabled) {
     submitBtn.click();
@@ -236,10 +243,20 @@ async function enterPrompt(inputEl, text) {
 async function executeTabCompletion(requestId, modelConfig, query, streamMode) {
   console.log(`[ZeroLLM ContentScript] Executing query for model ${modelConfig.id}: "${query}"`);
 
-  // 1. Find Chat Input Box
-  const inputEl = findElementByPattern(modelConfig.continueChatSelector) || 
-                  findElementByPattern(modelConfig.startChatSelector) ||
-                  document.querySelector("#prompt-textarea, textarea, [contenteditable='true']");
+  // 1. Find Chat Input Box (dengan retry untuk menunggu hidrasi SPA React/Vue)
+  let inputEl = findElementByPattern(modelConfig.continueChatSelector) || 
+                findElementByPattern(modelConfig.startChatSelector) ||
+                document.querySelector("#prompt-textarea, #mobile-composer-prompt, textarea, [contenteditable='true']");
+
+  if (!inputEl) {
+    for (let i = 0; i < 8; i++) {
+      await new Promise(r => setTimeout(r, 500));
+      inputEl = findElementByPattern(modelConfig.continueChatSelector) || 
+                findElementByPattern(modelConfig.startChatSelector) ||
+                document.querySelector("#prompt-textarea, #mobile-composer-prompt, textarea, [contenteditable='true']");
+      if (inputEl) break;
+    }
+  }
 
   if (!inputEl) {
     throw new Error(`Chat input area not found for model ${modelConfig.id}. Please ensure the chat page is loaded.`);

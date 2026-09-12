@@ -97,10 +97,18 @@ async function injectContentScriptSilently(tabId) {
 // ============================================================
 
 function wildcardToRegExp(pattern) {
-  const escaped = pattern
+  let norm = pattern.trim();
+  const hasTrailingSlashStar = norm.endsWith("/*");
+  if (hasTrailingSlashStar) {
+    norm = norm.slice(0, -2);
+  }
+  let escaped = norm
     .replace(/[.+^${}()|[\]\\]/g, "\\$&")
     .replace(/\*/g, ".*")
     .replace(/\?/g, ".");
+  if (hasTrailingSlashStar) {
+    escaped += "(?:/.*)?";
+  }
   return new RegExp(`^${escaped}$`, "i");
 }
 
