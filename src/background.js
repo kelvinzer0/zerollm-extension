@@ -544,7 +544,23 @@ function formatMessagesToPrompt(messages, tools = []) {
     promptBuilder += `${(lastMsg.content || "").trim()}`;
   }
 
-  return promptBuilder.trim();
+  const finalPrompt = promptBuilder.trim();
+  return stripInboundMeta(finalPrompt);
+}
+
+/**
+ * Membersihkan blok metadata sistem/inbound yang tidak perlu agar AI chatbot
+ * web tidak terdistraksi atau mengalami halusinasi.
+ */
+function stripInboundMeta(text) {
+  if (!text) return "";
+  return text
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/(?:Conversation info|Sender|Thread starter|Replied message|Forwarded message context|Chat history since last reply)\s*\(untrusted[^)]*\):\s*```json\n[\s\S]*?```\s*/g, "")
+    .replace(/`json\{[^`]*\}`\s*/g, "")
+    .replace(/\[(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat)\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?:\s+GMT[+-]\d+)?\]\s*/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 // ============================================================
@@ -572,7 +588,7 @@ async function nativeTypeAndSend(tabId, text, modelConfig) {
       modelConfig
     }).catch(() => null);
 
-    await new Promise(r => setTimeout(r, 150));
+    await new Promise(r => setTimeout(r, 200));
 
     // 2. Attach Chrome Debugger
     await chrome.debugger.attach(debuggee, "1.3");
@@ -580,7 +596,9 @@ async function nativeTypeAndSend(tabId, text, modelConfig) {
 
     // 3. Ketikkan teks menggunakan Input.insertText (native keyboard event)
     await chrome.debugger.sendCommand(debuggee, "Input.insertText", { text });
-    await new Promise(r => setTimeout(r, 150));
+    
+    // Jeda 450ms agar React Lexical / ProseMirror selesai memproses state internal
+    await new Promise(r => setTimeout(r, 450));
 
     // 4. Tekan tombol Enter menggunakan Input.dispatchKeyEvent standar keyboard hardware
     await chrome.debugger.sendCommand(debuggee, "Input.dispatchKeyEvent", {
@@ -602,7 +620,7 @@ async function nativeTypeAndSend(tabId, text, modelConfig) {
     });
 
     // Jeda singkat agar DOM React/Lexical memproses penekanan tombol Enter
-    await new Promise(r => setTimeout(r, 200));
+    await new Promise(r => setTimeout(r, 300));
 
     console.log(`[ZeroLLM CDP] Successfully typed and pressed Enter via Chrome Debugger on tab #${tabId}`);
     return { success: true, initialCount: focusRes?.initialCount || 0 };

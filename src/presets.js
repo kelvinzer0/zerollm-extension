@@ -22,11 +22,11 @@ export const DEFAULT_PRESETS = [
     enabled: true,
     urlPattern: "*://chatgpt.com/*",
     newChatSelector: "a[href='/'], [data-testid='new-chat-button'], [aria-label*='Obrolan baru'], [aria-label*='New chat']",
-    startChatSelector: "#prompt-textarea, textarea[id='prompt-textarea'], div#prompt-textarea, [data-testid='prompt-textarea'], #mobile-composer-prompt, textarea[id*='composer'], [placeholder*='Message'], [placeholder*='Tanya ChatGPT'], [aria-label*='ChatGPT'], [aria-label*='prompt']",
-    continueChatSelector: "#prompt-textarea, textarea[id='prompt-textarea'], div#prompt-textarea, [data-testid='prompt-textarea'], #mobile-composer-prompt, textarea[id*='composer'], [placeholder*='Message'], [placeholder*='Tanya ChatGPT'], [aria-label*='ChatGPT'], [aria-label*='prompt']",
-    streamSelector: "button[aria-label*='Berhenti'], button[data-testid='stop-button'], button[aria-label*='Stop'], [data-testid='fruitjuice-send-button']:has(svg path[d*='M2 12'])",
-    doneSelector: "button.wm-composer-submitButton:not([disabled]), button[data-testid='send-button']:not([disabled]), button[aria-label*='Kirim']:not([disabled]), button[aria-label*='Send']:not([disabled])",
-    resultContainerSelector: "[class*='assistantMessage'] [class*='messageCopy'], [class*='assistantMessage'], [data-message-author-role='assistant'] .markdown, [data-message-author-role='assistant'], article [data-message-author-role='assistant'], [class*='agent-turn']",
+    startChatSelector: "#prompt-textarea, textarea[id='prompt-textarea'], div#prompt-textarea, [data-testid='prompt-textarea'], #mobile-composer-prompt, textarea[id*='composer'], textarea[placeholder], textarea, [contenteditable='true']",
+    continueChatSelector: "#prompt-textarea, textarea[id='prompt-textarea'], div#prompt-textarea, [data-testid='prompt-textarea'], #mobile-composer-prompt, textarea[id*='composer'], textarea[placeholder], textarea, [contenteditable='true']",
+    streamSelector: "button[data-testid='stop-button'], button[aria-label*='Berhenti'], button[aria-label*='Stop'], button.bg-black .icon-lg, [data-testid='fruitjuice-send-button']:has(svg path[d*='M2 12'])",
+    doneSelector: "button[data-testid='send-button']:not([disabled]), button.wm-composer-submitButton:not([disabled]), button[aria-label*='Kirim']:not([disabled]), button[aria-label*='Send']:not([disabled])",
+    resultContainerSelector: "div[data-message-author-role='assistant'], .agent-turn [data-message-author-role='assistant'], [data-message-author-role='assistant'] .markdown, [class*='assistantMessage'] [class*='messageCopy'], [class*='assistantMessage'], [class*='agent-turn']",
     description: "Official OpenAI ChatGPT Web Interface (Desktop & Mobile DOM Verified Live)"
   },
   {

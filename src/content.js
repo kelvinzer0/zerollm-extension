@@ -67,9 +67,14 @@ function cleanHtmlToMarkdown(elementOrHtml) {
     }
   }
 
-  const parsed = walk(doc.body || doc).replace(/\n{3,}/g, "\n\n").trim();
+  const parsed = walk(doc.body || doc)
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
   if (!parsed && (elementOrHtml instanceof Element || (doc && doc.body))) {
-    const rawText = ((doc.body || elementOrHtml).innerText || "").trim();
+    const rawText = ((doc.body || elementOrHtml).innerText || "")
+      .replace(/[\u200B-\u200D\uFEFF]/g, "")
+      .trim();
     if (isThinkingOnly(rawText)) {
       return "";
     }
@@ -123,9 +128,12 @@ function findElementByPattern(selectorOrRegex) {
 function getResponseContainers(modelConfig) {
   const selectors = [
     modelConfig.resultContainerSelector,
+    "div[data-message-author-role='assistant']",
+    ".agent-turn [data-message-author-role='assistant']",
+    "[data-message-author-role='assistant'] .markdown",
+    "[data-message-author-role='assistant']",
     "[class*='assistantMessage'] [class*='messageCopy']",
     "[class*='assistantMessage']",
-    "[data-message-author-role='assistant']",
     ".markdown",
     "article",
     ".message-ai",
@@ -155,13 +163,14 @@ function checkIsDone(modelConfig) {
 
 function isThinkingOnly(text) {
   if (!text) return false;
-  const cleaned = text.trim().toLowerCase();
+  const cleaned = text.replace(/[\u200B-\u200D\uFEFF]/g, "").trim().toLowerCase();
   return /^(thinking(\.{0,3}|…)?|menalar(\.{0,3}|…)?|sedang berpikir(\.{0,3}|…)?|berhenti berpikir|stop thinking|berpikir(\.{0,3}|…)?|(?:berpikir|menalar)\s+selama\s+.*|thought\s+for\s+.*)$/i.test(cleaned);
 }
 
 function cleanResultMarkdown(markdown) {
   if (!markdown) return "";
   let cleaned = markdown
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
     .replace(/^(?:#+\s*)?(?:Thinking|Menalar|Sedang berpikir|Berhenti berpikir|Stop thinking)(?:\.{0,3}|…)?\s*\n+/gi, "")
     .replace(/^(?:Berhenti berpikir|Stop thinking)\s*\n+/gi, "")
     .replace(/^(?:Berpikir|Menalar)\s+selama\s+[^\n]+\n+/gi, "")
