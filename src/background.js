@@ -287,33 +287,9 @@ function syncModelsToBridge() {
 }
 
 // ============================================================
-//  REQUEST DISPATCH & QUEUE MANAGEMENT (MULTI-TAB)
+//  PROMPT FORMATTER & TOOL CALL PARSER
 // ============================================================
 
-async function handleBridgeMessage(msg) {
-  if (msg.type === "ping") {
-    sendToBridge({ type: "pong" });
-    return;
-  }
-
-  if (msg.type === "completionRequest" || msg.type === "responsesRequest") {
-    const req = msg.request || {};
-    const modelId = req.model;
-    const modelConfig = models.find(m => m.id === modelId && m.enabled !== false);
-
-    if (!modelConfig) {
-      sendToBridge({
-        type: "streamError",
-        requestId: msg.requestId,
-        error: `Model '${modelId}' is not registered or enabled in ZeroLLM extension`
-      });
-      return;
-    }
-
-/**
- * Mengonversi array pesan OpenAI (termasuk role: system, assistant, user)
- * menjadi satu kesatuan prompt utuh yang dipahami dan dipatuhi oleh Web AI chatbot.
- */
 /**
  * Ekstraksi pemanggilan tool standar OpenAI dari balasan model.
  * Mendukung format pelapis (layered): <action name="...">...</action>, [ACTION: ...], dan blok JSON.
@@ -494,6 +470,30 @@ function formatMessagesToPrompt(messages, tools = []) {
 
   return promptBuilder.trim();
 }
+
+// ============================================================
+//  REQUEST DISPATCH & QUEUE MANAGEMENT (MULTI-TAB)
+// ============================================================
+
+async function handleBridgeMessage(msg) {
+  if (msg.type === "ping") {
+    sendToBridge({ type: "pong" });
+    return;
+  }
+
+  if (msg.type === "completionRequest" || msg.type === "responsesRequest") {
+    const req = msg.request || {};
+    const modelId = req.model;
+    const modelConfig = models.find(m => m.id === modelId && m.enabled !== false);
+
+    if (!modelConfig) {
+      sendToBridge({
+        type: "streamError",
+        requestId: msg.requestId,
+        error: `Model '${modelId}' is not registered or enabled in ZeroLLM extension`
+      });
+      return;
+    }
 
     let query = "";
     if (req.messages && Array.isArray(req.messages)) {
