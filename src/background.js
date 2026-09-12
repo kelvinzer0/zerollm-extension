@@ -315,56 +315,96 @@ async function handleBridgeMessage(msg) {
  * menjadi satu kesatuan prompt utuh yang dipahami dan dipatuhi oleh Web AI chatbot.
  */
 /**
- * Ekstraksi pemanggilan tool standar OpenAI dari balasan model
+ * Ekstraksi pemanggilan tool standar OpenAI dari balasan model.
+ * Mendukung format pelapis (layered): <action name="...">...</action>, [ACTION: ...], dan blok JSON.
  */
 function parseToolCalls(text) {
   if (!text || typeof text !== "string") return null;
 
-  // 1. Coba ekstrak blok ```json ... ```
-  const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  let candidate = jsonMatch ? jsonMatch[1].trim() : text.trim();
+  const calls = [];
 
-  const firstBrace = candidate.indexOf("{");
-  const lastBrace = candidate.lastIndexOf("}");
-  if (firstBrace !== -1 && lastBrace > firstBrace) {
-    candidate = candidate.slice(firstBrace, lastBrace + 1);
+  // Pola 1 (Utama / Bebas Konflik): <action name="...">...</action> atau <call name="...">...</call>
+  const tagRegex = /<(?:action|call)\s+name=["\x27]([\w_-]+)["\x27]\s*>([\s\S]*?)<\/(?:action|call)>/gi;
+  let match;
+  while ((match = tagRegex.exec(text)) !== null) {
+    const fnName = match[1];
+    let argsStr = match[2].trim();
+    try {
+      const parsed = JSON.parse(argsStr);
+      argsStr = JSON.stringify(parsed);
+    } catch(e) {
+      if (!argsStr.startsWith("{")) argsStr = JSON.stringify({ input: argsStr });
+    }
+    calls.push({
+      id: "call_" + Math.random().toString(36).substring(2, 10),
+      type: "function",
+      function: { name: fnName, arguments: argsStr }
+    });
   }
 
-  try {
-    const parsed = JSON.parse(candidate);
-
-    // Format A: { "tool_calls": [ { "name": ..., "arguments": ... } ] }
-    if (Array.isArray(parsed.tool_calls) && parsed.tool_calls.length > 0) {
-      return parsed.tool_calls.map(tc => ({
-        id: tc.id || `call_${Math.random().toString(36).substring(2, 11)}`,
+  // Pola 2 (Alternatif): [ACTION: nama_fungsi({"param": "nilai"})]
+  if (calls.length === 0) {
+    const bracketRegex = /\[(?:ACTION|PANGGIL_FUNGSI|TOOL|CALL):\s*([\w_-]+)\(([\s\S]*?)\)\]/gi;
+    while ((match = bracketRegex.exec(text)) !== null) {
+      const fnName = match[1];
+      let argsStr = match[2].trim();
+      try {
+        const parsed = JSON.parse(argsStr);
+        argsStr = JSON.stringify(parsed);
+      } catch(e) {
+        argsStr = JSON.stringify({ param: argsStr });
+      }
+      calls.push({
+        id: "call_" + Math.random().toString(36).substring(2, 10),
         type: "function",
-        function: {
-          name: tc.name || tc.function?.name,
-          arguments: typeof tc.arguments === "string" 
-            ? tc.arguments 
-            : JSON.stringify(tc.arguments || tc.function?.arguments || {})
-        }
-      })).filter(tc => tc.function.name);
+        function: { name: fnName, arguments: argsStr }
+      });
     }
-
-    // Format B: { "name": "...", "arguments": { ... } }
-    if (parsed.name && (parsed.arguments !== undefined || parsed.parameters !== undefined)) {
-      return [{
-        id: parsed.id || `call_${Math.random().toString(36).substring(2, 11)}`,
-        type: "function",
-        function: {
-          name: parsed.name,
-          arguments: typeof (parsed.arguments || parsed.parameters) === "string"
-            ? (parsed.arguments || parsed.parameters)
-            : JSON.stringify(parsed.arguments || parsed.parameters || {})
-        }
-      }];
-    }
-  } catch (e) {
-    // Bukan JSON blok
   }
 
-  return null;
+  // Pola 3 (Fallback JSON murni jika model memilih format JSON langsung)
+  if (calls.length === 0) {
+    const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    let candidate = jsonMatch ? jsonMatch[1].trim() : text.trim();
+
+    const firstBrace = candidate.indexOf("{");
+    const lastBrace = candidate.lastIndexOf("}");
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      candidate = candidate.slice(firstBrace, lastBrace + 1);
+    }
+
+    try {
+      const parsed = JSON.parse(candidate);
+
+      if (Array.isArray(parsed.tool_calls) && parsed.tool_calls.length > 0) {
+        return parsed.tool_calls.map(tc => ({
+          id: tc.id || `call_${Math.random().toString(36).substring(2, 10)}`,
+          type: "function",
+          function: {
+            name: tc.name || tc.function?.name,
+            arguments: typeof tc.arguments === "string" 
+              ? tc.arguments 
+              : JSON.stringify(tc.arguments || tc.function?.arguments || {})
+          }
+        })).filter(tc => tc.function.name);
+      }
+
+      if (parsed.name && (parsed.arguments !== undefined || parsed.parameters !== undefined)) {
+        return [{
+          id: parsed.id || `call_${Math.random().toString(36).substring(2, 10)}`,
+          type: "function",
+          function: {
+            name: parsed.name,
+            arguments: typeof (parsed.arguments || parsed.parameters) === "string"
+              ? (parsed.arguments || parsed.parameters)
+              : JSON.stringify(parsed.arguments || parsed.parameters || {})
+          }
+        }];
+      }
+    } catch (e) {}
+  }
+
+  return calls.length > 0 ? calls : null;
 }
 
 /**
@@ -379,20 +419,23 @@ function formatMessagesToPrompt(messages, tools = []) {
     .filter(m => m.role === "system" && m.content)
     .map(m => m.content.trim());
 
-  // 2. Jika ada tools eksternal terdaftar, sertakan petunjuk pemanggilan tool
+  // 2. Jika ada tools eksternal terdaftar, lapisi dengan format tindakan aman bebas konflik
   if (Array.isArray(tools) && tools.length > 0) {
-    let toolDirective = "Anda memiliki akses ke tool/fungsi berikut:\n";
+    let toolDirective = "Fungsi tindakan eksternal yang tersedia:\n";
     tools.forEach((t, idx) => {
       const fn = t.function || t;
-      const desc = fn.description ? `: ${fn.description}` : "";
-      const params = fn.parameters ? JSON.stringify(fn.parameters) : "{}";
-      toolDirective += `${idx + 1}. \`${fn.name}\`${desc}\n   Parameter JSON Schema: ${params}\n`;
+      const desc = fn.description ? ` (${fn.description})` : "";
+      let params = "";
+      if (fn.parameters && fn.parameters.properties) {
+        params = Object.keys(fn.parameters.properties).join(", ");
+      }
+      toolDirective += `${idx + 1}. ${fn.name}(${params})${desc}\n`;
     });
 
-    toolDirective += "\n[PANDUAN PEMANGGILAN TOOL]:\n";
-    toolDirective += "Jika Anda perlu memanggil satu atau lebih tool di atas untuk melayani permintaan pengguna, respon HANYA dalam SATU blok kode JSON format berikut tanpa teks pembuka/penutup:\n";
-    toolDirective += "```json\n{\n  \"tool_calls\": [\n    {\n      \"name\": \"nama_tool\",\n      \"arguments\": { \"parameter\": \"nilai\" }\n    }\n  ]\n}\n```\n";
-    toolDirective += "Jika informasi sudah lengkap atau tidak memerlukan tool, responlah langsung secara normal dengan teks biasa.";
+    toolDirective += "\nAturan Pemanggilan Tindakan:\n";
+    toolDirective += "Jika Anda membutuhkan fungsi di atas untuk menjawab permintaan pengguna, balas HANYA dengan format tindakan berikut:\n";
+    toolDirective += "<action name=\"nama_fungsi\">{\"parameter\": \"nilai\"}</action>\n";
+    toolDirective += "Jika tidak memerlukan fungsi, berikan jawaban langsung seperti biasa.";
 
     systemParts.push(toolDirective);
   }
@@ -530,6 +573,10 @@ async function nativeTypeAndSend(tabId, text, modelConfig) {
       text: "\r"
     });
 
+    // 4b. Cadangan klik tombol submit jika masih aktif
+    await new Promise(r => setTimeout(r, 100));
+    await chrome.tabs.sendMessage(tabId, { type: "clickSubmitIfActive", modelConfig }).catch(() => {});
+
     console.log(`[ZeroLLM CDP] Successfully typed and pressed Enter via Chrome Debugger on tab #${tabId}`);
     return { success: true, initialCount: focusRes?.initialCount || 0 };
   } catch (err) {
@@ -542,14 +589,14 @@ async function nativeTypeAndSend(tabId, text, modelConfig) {
       } catch (e) {}
     }
 
-    // 5. Instant Restore: Kembalikan fokus ke tab awal pengguna agar browsing tidak terganggu
+    // 5. Restore fokus ke tab awal setelah jeda aman (2.5 detik) agar proses submit selesai
     if (originalTabId) {
       setTimeout(async () => {
         try {
           console.log(`[ZeroLLM AutoSwitch] Restoring focus back to tab #${originalTabId}`);
           await chrome.tabs.update(originalTabId, { active: true });
         } catch (e) {}
-      }, 250);
+      }, 2500);
     }
   }
 }

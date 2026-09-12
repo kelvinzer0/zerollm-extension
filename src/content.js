@@ -391,6 +391,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // Klik tombol kirim jika masih aktif setelah penekanan Enter via CDP
+  if (msg.type === "clickSubmitIfActive") {
+    let submitBtn = null;
+    if (msg.modelConfig?.doneSelector) {
+      submitBtn = findElementByPattern(msg.modelConfig.doneSelector);
+    }
+    if (!submitBtn) {
+      submitBtn = document.querySelector("button.wm-composer-submitButton:not([disabled]), button[data-testid='send-button']:not([disabled]), button[aria-label*='Kirim']:not([disabled]), button[aria-label*='Send']:not([disabled]), button[type='submit']:not([disabled]), .send-button:not([disabled])");
+    }
+    if (submitBtn && !submitBtn.disabled) {
+      try { submitBtn.click(); } catch(e) {}
+    }
+    sendResponse({ ok: true });
+    return true;
+  }
+
   // Wait for AI response (used after Chrome Debugger native CDP typing)
   if (msg.type === "waitForResponse") {
     const { requestId, modelConfig, query, stream, initialCount } = msg;
