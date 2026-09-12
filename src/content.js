@@ -316,7 +316,7 @@ function triggerSendOrEnter(modelConfig) {
 /**
  * Observe live AI response stream in the DOM until completion
  */
-function observeCompletion(requestId, modelConfig, query, streamMode, initialCount = 0) {
+function observeCompletion(requestId, modelConfig, query, streamMode, initialCount = 0, initialText = "") {
   return new Promise((resolve, reject) => {
     let lastMarkdown = "";
     let streamStarted = false;
@@ -324,47 +324,32 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
     let pollCount = 0;
     const maxPolls = 180; // 90 seconds max
 
-    // Tangkap isi teks terakhir sebelum prompt dikirim agar tidak salah deteksi pesan lama
-    const initialContainers = getResponseContainers(modelConfig);
-    const initialLastEl = initialContainers.length > 0 ? initialContainers[initialContainers.length - 1] : null;
-    const initialLastMarkdown = initialLastEl ? cleanHtmlToMarkdown(initialLastEl.innerHTML || initialLastEl) : "";
-
     const interval = setInterval(() => {
       pollCount++;
       const currentContainers = getResponseContainers(modelConfig);
       
       const hasNewContainer = currentContainers.length > initialCount;
-      let latestResponseEl = null;
-      if (hasNewContainer) {
-        latestResponseEl = currentContainers[currentContainers.length - 1];
-      } else if (currentContainers.length > 0) {
-        latestResponseEl = currentContainers[currentContainers.length - 1];
-      }
+      const latestResponseEl = currentContainers.length > 0 ? currentContainers[currentContainers.length - 1] : null;
 
-      let rawHtml = "";
-      if (latestResponseEl) {
-        rawHtml = latestResponseEl.innerHTML;
-      }
-
+      const rawHtml = latestResponseEl ? latestResponseEl.innerHTML : "";
       const isStreaming = checkIsStreaming(modelConfig);
-      const isDone = checkIsDone(modelConfig);
       const markdown = cleanHtmlToMarkdown(rawHtml || latestResponseEl || "");
-
-      // Validasi: Apakah teks ini benar-benar respon baru (bukan teks lama sebelum prompt terkirim)?
       const meaningfulMarkdown = cleanResultMarkdown(markdown);
-      const isNewContent = hasNewContainer || (markdown !== initialLastMarkdown && initialLastMarkdown !== "") || isStreaming;
-      const hasMeaningfulText = meaningfulMarkdown.replace(/[`\s]/g, "").length > 0;
       const thinkingOnly = isThinkingOnly(markdown) || isThinkingOnly(meaningfulMarkdown);
 
-      if (isNewContent && hasMeaningfulText && !thinkingOnly) {
-        if (markdown !== lastMarkdown) {
-          const delta = markdown.startsWith(lastMarkdown) ? 
-                        markdown.slice(lastMarkdown.length) : 
-                        markdown;
+      // Cek apakah konten ini teks baru dari generasi saat ini
+      const isDifferentFromInitial = !initialText || meaningfulMarkdown !== initialText;
+      const hasMeaningfulText = meaningfulMarkdown.replace(/[`\s]/g, "").length > 0;
+
+      if (hasMeaningfulText && !thinkingOnly && (hasNewContainer || isDifferentFromInitial || isStreaming)) {
+        if (meaningfulMarkdown !== lastMarkdown) {
+          const delta = meaningfulMarkdown.startsWith(lastMarkdown) ? 
+                        meaningfulMarkdown.slice(lastMarkdown.length) : 
+                        meaningfulMarkdown;
           
-          lastMarkdown = markdown;
+          lastMarkdown = meaningfulMarkdown;
           streamStarted = true;
-          stableCount = 0; // Text is actively changing
+          stableCount = 0;
 
           if (streamMode && delta) {
             chrome.runtime.sendMessage({
@@ -374,20 +359,17 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
             });
           }
         } else {
-          // Text has not changed in this poll
           stableCount++;
         }
       } else {
-        // Still waiting or thinking or old content
         stableCount = 0;
       }
 
       // Selesai jika:
-      // 1. Stream sudah mulai dan teks baru terkonfirmasi
-      // 2. Tidak lagi dalam status streaming
-      // 3. Teks stabil
-      const stableThreshold = isDone ? 2 : 4;
-      if (streamStarted && hasMeaningfulText && !thinkingOnly && !isStreaming && stableCount >= stableThreshold && pollCount > 3) {
+      // 1. Teks baru terdeteksi (streamStarted)
+      // 2. Tidak lagi dalam status streaming (!isStreaming)
+      // 3. Teks stabil minimal 2 putaran polling (1 detik)
+      if (streamStarted && hasMeaningfulText && !thinkingOnly && !isStreaming && stableCount >= 2 && pollCount >= 2) {
         clearInterval(interval);
         resolve(cleanResultMarkdown(lastMarkdown));
         return;
@@ -396,7 +378,7 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
       // Safety timeout
       if (pollCount >= maxPolls) {
         clearInterval(interval);
-        if (lastMarkdown && hasMeaningfulText && !thinkingOnly && streamStarted) {
+        if (lastMarkdown && hasMeaningfulText && !thinkingOnly) {
           resolve(cleanResultMarkdown(lastMarkdown));
         } else {
           reject(new Error("Timeout waiting for AI response from page DOM"));
@@ -434,12 +416,14 @@ async function executeTabCompletion(requestId, modelConfig, query, streamMode) {
   // Count existing assistant messages to target newly created response
   const prevContainers = getResponseContainers(modelConfig);
   const initialCount = prevContainers.length;
+  const lastEl = prevContainers.length > 0 ? prevContainers[prevContainers.length - 1] : null;
+  const initialText = lastEl ? cleanResultMarkdown(cleanHtmlToMarkdown(lastEl.innerHTML || lastEl)) : "";
 
   // 2. Submit prompt
   await enterPrompt(inputEl, query);
 
   // 3. Monitor DOM response with Polling
-  return observeCompletion(requestId, modelConfig, query, streamMode, initialCount);
+  return observeCompletion(requestId, modelConfig, query, streamMode, initialCount, initialText);
 }
 
 // Listen for messages from background.js
@@ -475,7 +459,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (freshInput) {
           freshInput.focus();
           const prevContainers = getResponseContainers(msg.modelConfig);
-          sendResponse({ success: true, initialCount: prevContainers.length });
+          const lastEl = prevContainers.length > 0 ? prevContainers[prevContainers.length - 1] : null;
+          const initialText = lastEl ? cleanResultMarkdown(cleanHtmlToMarkdown(lastEl.innerHTML || lastEl)) : "";
+          sendResponse({ success: true, initialCount: prevContainers.length, initialText });
         } else {
           sendResponse({ success: false, error: "Input not found after New Chat" });
         }
@@ -494,7 +480,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         inputEl.dispatchEvent(new Event("input", { bubbles: true }));
       }
       const prevContainers = getResponseContainers(msg.modelConfig);
-      sendResponse({ success: true, initialCount: prevContainers.length });
+      const lastEl = prevContainers.length > 0 ? prevContainers[prevContainers.length - 1] : null;
+      const initialText = lastEl ? cleanResultMarkdown(cleanHtmlToMarkdown(lastEl.innerHTML || lastEl)) : "";
+      sendResponse({ success: true, initialCount: prevContainers.length, initialText });
     } else {
       sendResponse({ success: false, error: "Input not found" });
     }
@@ -510,9 +498,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   // Wait for AI response (used after Chrome Debugger native CDP typing)
   if (msg.type === "waitForResponse") {
-    const { requestId, modelConfig, query, stream, initialCount } = msg;
+    const { requestId, modelConfig, query, stream, initialCount, initialText } = msg;
 
-    observeCompletion(requestId, modelConfig, query, stream, initialCount || 0)
+    observeCompletion(requestId, modelConfig, query, stream, initialCount || 0, initialText || "")
       .then(fullMarkdown => {
         chrome.runtime.sendMessage({
           type: "response",

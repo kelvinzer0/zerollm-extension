@@ -682,7 +682,11 @@ async function nativeTypeAndSend(tabId, text, modelConfig) {
     await new Promise(r => setTimeout(r, 300));
 
     console.log(`[ZeroLLM CDP] Successfully typed and pressed Enter via Chrome Debugger on tab #${tabId}`);
-    return { success: true, initialCount: focusRes?.initialCount || 0 };
+    return {
+      success: true,
+      initialCount: focusRes?.initialCount || 0,
+      initialText: focusRes?.initialText || ""
+    };
   } catch (err) {
     console.warn("[ZeroLLM CDP] nativeTypeAndSend fallback to DOM:", err.message);
     return { success: false };
@@ -807,7 +811,8 @@ async function processParallelModelQueue(modelId) {
             modelConfig: task.modelConfig,
             query: task.query,
             stream: task.stream,
-            initialCount: cdpResult.initialCount
+            initialCount: cdpResult.initialCount,
+            initialText: cdpResult.initialText
           });
         } else {
           await chrome.tabs.sendMessage(targetTabId, {
@@ -907,7 +912,8 @@ async function processGlobalQueue() {
             modelConfig: task.modelConfig,
             query: task.query,
             stream: task.stream,
-            initialCount: cdpResult.initialCount
+            initialCount: cdpResult.initialCount,
+            initialText: cdpResult.initialText
           });
         } else {
           // Fallback DOM typing
