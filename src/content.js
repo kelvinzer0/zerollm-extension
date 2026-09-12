@@ -419,25 +419,26 @@ function checkIsStreaming(modelConfig) {
 
 /**
  * Enter prompt text into input element using native DOM setters and input events
- * Handles React/Vue/ProseMirror input state listeners
+ * Handles React/Vue/ProseMirror/Svelte input state listeners
  */
-async function enterPrompt(inputEl, text) {
+async function enterPrompt(inputEl, text, modelConfig = null) {
+  if (!inputEl) return;
   inputEl.focus();
 
   if (inputEl.isContentEditable) {
-    // ContentEditable (ChatGPT ProseMirror / Lexical)
+    // ContentEditable (ChatGPT ProseMirror / Lexical / ChatSmith / Claude)
     inputEl.focus();
-    // Select all existing content
     document.execCommand("selectAll", false, null);
-    // Insert text so React synthetic events update properly
     const success = document.execCommand("insertText", false, text);
     if (!success) {
       inputEl.innerHTML = `<p>${text}</p>`;
     }
-    inputEl.dispatchEvent(new Event("input", { bubbles: true }));
+    inputEl.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: text }));
+    inputEl.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
     inputEl.dispatchEvent(new Event("change", { bubbles: true }));
   } else {
-    // Standard Textarea / Input with native value setter
+    // Standard Textarea / Input with native value setter (DeepSeek / Qwen / MiMo / Grok)
+    inputEl.focus();
     const nativeSetter = Object.getOwnPropertyDescriptor(
       inputEl instanceof HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype,
       "value"
@@ -448,33 +449,22 @@ async function enterPrompt(inputEl, text) {
     } else {
       inputEl.value = text;
     }
-    inputEl.dispatchEvent(new Event("input", { bubbles: true }));
+    inputEl.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: text }));
+    inputEl.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
     inputEl.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
-  await new Promise(r => setTimeout(r, 400));
+  await new Promise(r => setTimeout(r, 350));
 
   // Dismiss any blocking dialogs/overlays if present (e.g. login prompts, welcome modals)
   const dismissBtn = document.querySelector("button[aria-label='Tutup'], button[aria-label='Close'], button[aria-label='Kembali ke ChatGPT'], button:has(svg path[d*='M18 6L6 18'])");
   if (dismissBtn) {
     try { dismissBtn.click(); } catch(e) {}
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 200));
   }
 
-  // Find and click submit button
-  const form = inputEl.closest("form");
-  const submitBtn = (form ? form.querySelector("button[type='submit']") : null) || 
-                   document.querySelector("button[data-testid='send-button'], button[data-testid='fruitjuice-send-button'], button[aria-label*='Send'], button[aria-label*='Kirim'], button[aria-label*='prompt']");
-
-  if (submitBtn && !submitBtn.disabled) {
-    submitBtn.click();
-  } else {
-    // Keyboard Enter fallback with full event pipeline
-    const enterOpts = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true };
-    inputEl.dispatchEvent(new KeyboardEvent("keydown", enterOpts));
-    inputEl.dispatchEvent(new KeyboardEvent("keypress", enterOpts));
-    inputEl.dispatchEvent(new KeyboardEvent("keyup", enterOpts));
-  }
+  // Trigger Send Button click with full pointer/mouse/click dispatch
+  triggerSendOrEnter(modelConfig, inputEl);
 }
 
 /**
@@ -707,7 +697,7 @@ async function executeTabCompletion(requestId, modelConfig, query, streamMode) {
   const initialText = lastEl ? cleanResultMarkdown(cleanHtmlToMarkdown(lastEl.innerHTML || lastEl)) : "";
 
   // 2. Submit prompt
-  await enterPrompt(inputEl, query);
+  await enterPrompt(inputEl, query, modelConfig);
 
   // 3. Monitor DOM response with Polling
   return observeCompletion(requestId, modelConfig, query, streamMode, initialCount, initialText);
@@ -748,7 +738,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
         // Jika query dikirim langsung: ketik dan submit di content.js (bypass CDP focus loss)
         if (msg.query) {
-          await enterPrompt(inputEl, msg.query);
+          await enterPrompt(inputEl, msg.query, msg.modelConfig);
           sendResponse({ success: true, directTyped: true, initialCount: prevContainers.length, initialText });
         } else {
           // Legacy: hanya fokus dan bersihkan, biarkan CDP mengetik
