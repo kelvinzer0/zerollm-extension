@@ -240,38 +240,9 @@ async function enterPrompt(inputEl, text) {
 }
 
 /**
- * Execute completion in the current web page tab
+ * Observe live AI response stream in the DOM until completion
  */
-async function executeTabCompletion(requestId, modelConfig, query, streamMode) {
-  console.log(`[ZeroLLM ContentScript] Executing query for model ${modelConfig.id}: "${query}"`);
-
-  // 1. Find Chat Input Box (dengan retry untuk menunggu hidrasi SPA React/Vue)
-  let inputEl = findElementByPattern(modelConfig.continueChatSelector) || 
-                findElementByPattern(modelConfig.startChatSelector) ||
-                document.querySelector("#prompt-textarea, #mobile-composer-prompt, textarea, [contenteditable='true']");
-
-  if (!inputEl) {
-    for (let i = 0; i < 8; i++) {
-      await new Promise(r => setTimeout(r, 500));
-      inputEl = findElementByPattern(modelConfig.continueChatSelector) || 
-                findElementByPattern(modelConfig.startChatSelector) ||
-                document.querySelector("#prompt-textarea, #mobile-composer-prompt, textarea, [contenteditable='true']");
-      if (inputEl) break;
-    }
-  }
-
-  if (!inputEl) {
-    throw new Error(`Chat input area not found for model ${modelConfig.id}. Please ensure the chat page is loaded.`);
-  }
-
-  // Count existing assistant messages to target newly created response
-  const prevContainers = getResponseContainers(modelConfig);
-  const initialCount = prevContainers.length;
-
-  // 2. Submit prompt
-  await enterPrompt(inputEl, query);
-
-  // 3. Monitor DOM response with Polling
+function observeCompletion(requestId, modelConfig, query, streamMode, initialCount = 0) {
   return new Promise((resolve, reject) => {
     let lastMarkdown = "";
     let streamStarted = false;
@@ -356,10 +327,102 @@ async function executeTabCompletion(requestId, modelConfig, query, streamMode) {
   });
 }
 
+/**
+ * Execute completion in the current web page tab (Legacy / Fallback DOM Mode)
+ */
+async function executeTabCompletion(requestId, modelConfig, query, streamMode) {
+  console.log(`[ZeroLLM ContentScript] Executing query for model ${modelConfig.id}: "${query}"`);
+
+  // 1. Find Chat Input Box (dengan retry untuk menunggu hidrasi SPA React/Vue)
+  let inputEl = findElementByPattern(modelConfig.continueChatSelector) || 
+                findElementByPattern(modelConfig.startChatSelector) ||
+                document.querySelector("#prompt-textarea, #mobile-composer-prompt, textarea, [contenteditable='true']");
+
+  if (!inputEl) {
+    for (let i = 0; i < 8; i++) {
+      await new Promise(r => setTimeout(r, 500));
+      inputEl = findElementByPattern(modelConfig.continueChatSelector) || 
+                findElementByPattern(modelConfig.startChatSelector) ||
+                document.querySelector("#prompt-textarea, #mobile-composer-prompt, textarea, [contenteditable='true']");
+      if (inputEl) break;
+    }
+  }
+
+  if (!inputEl) {
+    throw new Error(`Chat input area not found for model ${modelConfig.id}. Please ensure the chat page is loaded.`);
+  }
+
+  // Count existing assistant messages to target newly created response
+  const prevContainers = getResponseContainers(modelConfig);
+  const initialCount = prevContainers.length;
+
+  // 2. Submit prompt
+  await enterPrompt(inputEl, query);
+
+  // 3. Monitor DOM response with Polling
+  return observeCompletion(requestId, modelConfig, query, streamMode, initialCount);
+}
+
 // Listen for messages from background.js
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "ping") {
     sendResponse({ pong: true, url: window.location.href });
+    return true;
+  }
+
+  // Prepare input element and focus before Chrome Debugger CDP typing
+  if (msg.type === "focusInput") {
+    const dismissBtn = document.querySelector("button[aria-label='Tutup'], button[aria-label='Close'], button[aria-label='Kembali ke ChatGPT'], button:has(svg path[d*='M18 6L6 18'])");
+    if (dismissBtn) {
+      try { dismissBtn.click(); } catch(e) {}
+    }
+
+    let inputEl = findElementByPattern(msg.modelConfig?.continueChatSelector) || 
+                  findElementByPattern(msg.modelConfig?.startChatSelector) ||
+                  document.querySelector("#prompt-textarea, #mobile-composer-prompt, textarea, [contenteditable='true']");
+
+    if (inputEl) {
+      inputEl.focus();
+      const prevContainers = getResponseContainers(msg.modelConfig);
+      sendResponse({ success: true, initialCount: prevContainers.length });
+    } else {
+      sendResponse({ success: false, error: "Input not found" });
+    }
+    return true;
+  }
+
+  // Wait for AI response (used after Chrome Debugger native CDP typing)
+  if (msg.type === "waitForResponse") {
+    const { requestId, modelConfig, query, stream, initialCount } = msg;
+
+    // Cek tombol submit jika ada yang perlu diklik
+    const submitBtn = document.querySelector("button.wm-composer-submitButton:not([disabled]), button[data-testid='send-button']:not([disabled]), button[aria-label*='Kirim']:not([disabled]), button[aria-label*='Send']:not([disabled])");
+    if (submitBtn && !submitBtn.disabled) {
+      try { submitBtn.click(); } catch(e) {}
+    }
+
+    observeCompletion(requestId, modelConfig, query, stream, initialCount || 0)
+      .then(fullMarkdown => {
+        chrome.runtime.sendMessage({
+          type: "response",
+          requestId,
+          content: fullMarkdown,
+          usage: {
+            prompt_tokens: Math.ceil(query.length / 4),
+            completion_tokens: Math.ceil(fullMarkdown.length / 4),
+            total_tokens: Math.ceil((query.length + fullMarkdown.length) / 4)
+          }
+        });
+      })
+      .catch(err => {
+        chrome.runtime.sendMessage({
+          type: "streamError",
+          requestId,
+          error: err.message || "Failed to observe AI response from page"
+        });
+      });
+
+    sendResponse({ accepted: true });
     return true;
   }
 

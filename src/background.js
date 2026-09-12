@@ -117,6 +117,16 @@ function wildcardToRegExp(pattern) {
  */
 async function getTabForModel(modelConfig) {
   const patternRegex = wildcardToRegExp(modelConfig.urlPattern);
+
+  // 0. Prioritaskan active tab di jendela yang sedang dibuka user jika cocok!
+  try {
+    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (activeTab && activeTab.url && patternRegex.test(activeTab.url)) {
+      modelTabMap.set(modelConfig.id, activeTab.id);
+      return activeTab;
+    }
+  } catch (e) {}
+
   const allTabs = await chrome.tabs.query({});
 
   // 1. Cek tab yang sudah dipetakan sebelumnya
@@ -378,6 +388,59 @@ async function processModelQueue(modelId) {
   const queue = modelQueues.get(modelId);
   if (!queue || queue.length === 0) return;
 
+/**
+ * Menggunakan Chrome DevTools Protocol (CDP) via chrome.debugger untuk menyuntikkan
+ * pengetikan teks dan penekanan tombol Enter tingkat hardware asli (isTrusted: true).
+ * Bypasses all React Lexical / ProseMirror synthetic event barriers!
+ */
+async function nativeTypeAndSend(tabId, text, modelConfig) {
+  const debuggee = { tabId };
+  let attached = false;
+  try {
+    // 1. Minta content script fokus ke input box terlebih dahulu & ambil initialCount
+    const focusRes = await chrome.tabs.sendMessage(tabId, {
+      type: "focusInput",
+      modelConfig
+    }).catch(() => null);
+
+    await new Promise(r => setTimeout(r, 250));
+
+    // 2. Attach Chrome Debugger
+    await chrome.debugger.attach(debuggee, "1.3");
+    attached = true;
+
+    // 3. Ketikkan teks menggunakan Input.insertText (native keyboard event)
+    await chrome.debugger.sendCommand(debuggee, "Input.insertText", { text });
+    await new Promise(r => setTimeout(r, 200));
+
+    // 4. Tekan tombol Enter menggunakan Input.dispatchKeyEvent (rawKeyDown + keyUp)
+    await chrome.debugger.sendCommand(debuggee, "Input.dispatchKeyEvent", {
+      type: "rawKeyDown",
+      windowsVirtualKeyCode: 13,
+      unmodifiedText: "\r",
+      text: "\r"
+    });
+    await chrome.debugger.sendCommand(debuggee, "Input.dispatchKeyEvent", {
+      type: "keyUp",
+      windowsVirtualKeyCode: 13,
+      unmodifiedText: "\r",
+      text: "\r"
+    });
+
+    console.log(`[ZeroLLM CDP] Successfully typed and pressed Enter via Chrome Debugger on tab #${tabId}`);
+    return { success: true, initialCount: focusRes?.initialCount || 0 };
+  } catch (err) {
+    console.warn("[ZeroLLM CDP] nativeTypeAndSend fallback to DOM:", err.message);
+    return { success: false };
+  } finally {
+    if (attached) {
+      try {
+        await chrome.debugger.detach(debuggee);
+      } catch (e) {}
+    }
+  }
+}
+
   isProcessingTab.set(modelId, true);
   const task = queue.shift();
 
@@ -391,14 +454,29 @@ async function processModelQueue(modelId) {
     // 2. Sambungkan kembali content script jika baru di-reload
     await ensureContentScript(tab.id);
 
-    // 3. Kirim query ke tab untuk diproses
-    await chrome.tabs.sendMessage(tab.id, {
-      type: "executePrompt",
-      requestId: task.requestId,
-      modelConfig: task.modelConfig,
-      query: task.query,
-      stream: task.stream
-    });
+    // 3. Coba ketik & kirim secara native via Chrome Debugger (CDP)
+    const cdpResult = await nativeTypeAndSend(tab.id, task.query, task.modelConfig);
+
+    if (cdpResult.success) {
+      // 4a. Jika sukses via CDP, mulai observasi respon dari DOM
+      await chrome.tabs.sendMessage(tab.id, {
+        type: "waitForResponse",
+        requestId: task.requestId,
+        modelConfig: task.modelConfig,
+        query: task.query,
+        stream: task.stream,
+        initialCount: cdpResult.initialCount
+      });
+    } else {
+      // 4b. Fallback: Eksekusi pengetikan dan submit via content script biasa
+      await chrome.tabs.sendMessage(tab.id, {
+        type: "executePrompt",
+        requestId: task.requestId,
+        modelConfig: task.modelConfig,
+        query: task.query,
+        stream: task.stream
+      });
+    }
   } catch (err) {
     console.error("[ZeroLLM] processModelQueue error:", err);
     sendToBridge({
