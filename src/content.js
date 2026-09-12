@@ -458,7 +458,8 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
       const thinkingOnly = isThinkingOnly(markdown) || isThinkingOnly(meaningfulMarkdown);
 
       // Cek apakah konten ini teks baru dari generasi saat ini
-      const isDifferentFromInitial = !initialText || meaningfulMarkdown !== initialText;
+      const isTextDifferent = !initialText || meaningfulMarkdown !== initialText;
+      const isNewResponse = hasNewContainer || (isTextDifferent && initialCount === 0) || (isTextDifferent && !meaningfulMarkdown.startsWith(initialText));
       const hasMeaningfulText = meaningfulMarkdown.replace(/[`\s]/g, "").length > 0;
 
       // Filter out user message reflections (jangan anggap teks prompt sebagai jawaban)
@@ -466,7 +467,8 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
       const normalizedResponse = meaningfulMarkdown.replace(/[\u200B-\u200D\uFEFF\s]/g, "").toLowerCase();
       const isUserEcho = normalizedQuery.length > 0 && (normalizedResponse === normalizedQuery || (normalizedResponse.startsWith(normalizedQuery) && normalizedResponse.length <= normalizedQuery.length + 5));
 
-      if (hasMeaningfulText && !thinkingOnly && !isUserEcho && (hasNewContainer || isDifferentFromInitial || isStreaming)) {
+      // HANYA proses jika ini benar-benar respon baru (bukan teks lama yang belum terupdate)
+      if (hasMeaningfulText && !thinkingOnly && !isUserEcho && isNewResponse && (hasNewContainer || isTextDifferent || isStreaming)) {
         if (meaningfulMarkdown !== lastMarkdown) {
           const delta = meaningfulMarkdown.startsWith(lastMarkdown) ? 
                         meaningfulMarkdown.slice(lastMarkdown.length) : 
