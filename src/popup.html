@@ -320,6 +320,23 @@
 
   <!-- TAB 1: MODELS LIST -->
   <section id="tab-models" class="tab-content active">
+    <!-- TOGGLE: SEQUENTIAL VS MULTI-WINDOW PARALLEL -->
+    <div class="card" style="margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; border-left: 3px solid var(--primary);">
+      <div style="flex: 1; padding-right: 10px;">
+        <div style="font-weight: 600; font-size: 12px; color: #fff; display: flex; align-items: center; gap: 6px;">
+          <span>⚡ Multi-Window Parallel Mode</span>
+          <span id="modeBadge" style="font-size: 9px; padding: 1px 5px; border-radius: 4px; background: rgba(59, 130, 246, 0.2); color: var(--primary);">Queue</span>
+        </div>
+        <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;" id="modeDesc">
+          Buka tiap AI di jendela terpisah untuk respon serentak secara paralel tanpa antre.
+        </div>
+      </div>
+      <label class="switch" title="Toggle Multi-Window Parallel Mode">
+        <input type="checkbox" id="parallelToggle">
+        <span class="slider"></span>
+      </label>
+    </div>
+
     <div class="card">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
         <label style="margin: 0;">Registered Web AI Models</label>

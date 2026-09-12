@@ -5,6 +5,9 @@ const connDot = document.getElementById("connDot");
 const connText = document.getElementById("connText");
 const modelsList = document.getElementById("modelsList");
 const modelCountBadge = document.getElementById("modelCountBadge");
+const parallelToggle = document.getElementById("parallelToggle");
+const modeBadge = document.getElementById("modeBadge");
+const modeDesc = document.getElementById("modeDesc");
 
 // Form elements
 const mId = document.getElementById("mId");
@@ -127,7 +130,41 @@ function updateState(state) {
     dispApiKey.textContent = state.apiKey;
   }
 
+  // Multi-Window Parallel Mode toggle state
+  const isParallel = state.executionMode === "parallel";
+  if (parallelToggle) parallelToggle.checked = isParallel;
+  if (modeBadge) {
+    modeBadge.textContent = isParallel ? "Parallel" : "Queue";
+    modeBadge.style.color = isParallel ? "#10b981" : "#3b82f6";
+    modeBadge.style.background = isParallel ? "rgba(16, 185, 129, 0.2)" : "rgba(59, 130, 246, 0.2)";
+  }
+  if (modeDesc) {
+    modeDesc.textContent = isParallel
+      ? "Mode Aktif: Multi-Window (Setiap AI di jendela terpisah, respon serentak paralel)."
+      : "Mode Aktif: Sequential Queue (1 jendela bergantian, hemat memori, tab lock anti-mogok).";
+  }
+
   renderModels(state.models);
+}
+
+if (parallelToggle) {
+  parallelToggle.addEventListener("change", (e) => {
+    const mode = e.target.checked ? "parallel" : "sequential";
+    chrome.runtime.sendMessage({
+      type: "setExecutionMode",
+      mode
+    });
+    if (modeBadge) {
+      modeBadge.textContent = e.target.checked ? "Parallel" : "Queue";
+      modeBadge.style.color = e.target.checked ? "#10b981" : "#3b82f6";
+      modeBadge.style.background = e.target.checked ? "rgba(16, 185, 129, 0.2)" : "rgba(59, 130, 246, 0.2)";
+    }
+    if (modeDesc) {
+      modeDesc.textContent = e.target.checked
+        ? "Mode Aktif: Multi-Window (Setiap AI di jendela terpisah, respon serentak paralel)."
+        : "Mode Aktif: Sequential Queue (1 jendela bergantian, hemat memori, tab lock anti-mogok).";
+    }
+  });
 }
 
 function saveModelsToBackground(newModels) {

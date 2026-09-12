@@ -24,12 +24,22 @@ let pingInterval = null;
 
 // User defined & preset models
 let models = [];
+// Execution mode: "sequential" (single window queue) | "parallel" (dedicated multi-window parallel)
+let executionMode = "sequential";
+
 // Active Model -> Tab ID mapping: Map<modelId, tabId>
 const modelTabMap = new Map();
-// Global FIFO Queue untuk memproses prompt secara berurutan
-// Hal ini menjamin tab AI (seperti ChatGPT) tetap AKTIF selama generasi dan tidak terpotong oleh tab lain
+// Model -> Window ID mapping (digunakan saat parallel mode aktif): Map<modelId, windowId>
+const modelWindowMap = new Map();
+
+// Sequential Single-Window FIFO Queue
 const globalQueue = [];
 let isProcessingGlobalQueue = false;
+
+// Parallel Multi-Window Queues per Model: Map<modelId, Array<task>>
+const modelQueues = new Map();
+const isProcessingModel = new Map();
+
 // Map request aktif: Map<requestId, { resolve, reject, task, targetTabId, originalTabId }>
 const activeRequests = new Map();
 
@@ -38,7 +48,7 @@ const activeRequests = new Map();
 // ============================================================
 
 async function loadModels() {
-  const data = await chrome.storage.local.get(["customModels", "bridgeUrl", "roomId", "apiKey"]);
+  const data = await chrome.storage.local.get(["customModels", "bridgeUrl", "roomId", "apiKey", "executionMode"]);
   if (data.customModels && Array.isArray(data.customModels) && data.customModels.length > 0) {
     models = data.customModels;
   } else {
@@ -49,6 +59,7 @@ async function loadModels() {
   if (data.bridgeUrl) bridgeUrl = data.bridgeUrl;
   if (data.roomId) roomId = data.roomId;
   if (data.apiKey) apiKey = data.apiKey;
+  if (data.executionMode) executionMode = data.executionMode;
 }
 
 // ============================================================
@@ -116,11 +127,73 @@ function wildcardToRegExp(pattern) {
 }
 
 /**
- * Mencari tab yang cocok atau OTOMATIS MEMBUKA TAB BARU jika belum terbuka
+ * Mencari tab yang cocok atau OTOMATIS MEMBUKA TAB/WINDOW BARU jika belum terbuka
  */
 async function getTabForModel(modelConfig) {
   const patternRegex = wildcardToRegExp(modelConfig.urlPattern);
 
+  // ── MODE PARALEL (MULTI-WINDOW) ──────────────────────────────
+  if (executionMode === "parallel") {
+    // 1. Cek window terdaftar untuk model ini
+    const winId = modelWindowMap.get(modelConfig.id);
+    if (winId) {
+      try {
+        const win = await chrome.windows.get(winId, { populate: true });
+        const tab = win.tabs?.find(t => t.url && patternRegex.test(t.url)) || win.tabs?.[0];
+        if (tab) {
+          modelTabMap.set(modelConfig.id, tab.id);
+          return tab;
+        }
+      } catch (e) {
+        modelWindowMap.delete(modelConfig.id);
+      }
+    }
+
+    // 2. Cek apakah ada window manapun yang memiliki tab yang cocok
+    const allWindows = await chrome.windows.getAll({ populate: true }).catch(() => []);
+    for (const w of allWindows) {
+      const match = w.tabs?.find(t => t.url && patternRegex.test(t.url));
+      if (match) {
+        modelWindowMap.set(modelConfig.id, w.id);
+        modelTabMap.set(modelConfig.id, match.id);
+        return match;
+      }
+    }
+
+    // 3. Jika belum ada: Buka Jendela Baru Khusus (Dedicated Window) untuk model ini!
+    console.log(`[ZeroLLM Parallel] Opening dedicated window for model ${modelConfig.id}...`);
+    let targetUrl = modelConfig.urlPattern.replace(/\*/g, "");
+    if (!targetUrl.startsWith("http")) {
+      targetUrl = "https://" + targetUrl.replace(/^\/+/, "");
+    }
+
+    const newWin = await chrome.windows.create({
+      url: targetUrl,
+      type: "normal",
+      width: 960,
+      height: 720,
+      focused: false
+    });
+    const createdTab = newWin.tabs?.[0];
+    if (newWin.id) modelWindowMap.set(modelConfig.id, newWin.id);
+    if (createdTab) modelTabMap.set(modelConfig.id, createdTab.id);
+
+    // Tunggu tab selesai dimuat (max 10 detik)
+    await new Promise(resolve => {
+      const listener = (tabId, info) => {
+        if (createdTab && tabId === createdTab.id && info.status === "complete") {
+          chrome.tabs.onUpdated.removeListener(listener);
+          resolve();
+        }
+      };
+      chrome.tabs.onUpdated.addListener(listener);
+      setTimeout(resolve, 10000);
+    });
+
+    return createdTab;
+  }
+
+  // ── MODE SEQUENTIAL (SINGLE-WINDOW) ──────────────────────────
   // 0. Prioritaskan active tab di jendela yang sedang dibuka user jika cocok!
   try {
     const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -574,14 +647,118 @@ async function handleBridgeMessage(msg) {
       query = req.input;
     }
 
-    globalQueue.push({
+    const taskItem = {
       requestId: msg.requestId,
       modelConfig,
       query,
       stream: req.stream !== false
+    };
+
+    if (executionMode === "parallel") {
+      // MODE PARALEL (MULTI-WINDOW): Setiap model berjalan serentak di jendela khususnya masing-masing!
+      if (!modelQueues.has(modelId)) {
+        modelQueues.set(modelId, []);
+      }
+      modelQueues.get(modelId).push(taskItem);
+      processParallelModelQueue(modelId);
+    } else {
+      // MODE SEQUENTIAL (SINGLE-WINDOW): Antrean tertib bergantian, 1 tab aktif terkunci sampai selesai
+      globalQueue.push(taskItem);
+      processGlobalQueue();
+    }
+  }
+}
+
+/**
+ * Pemrosesan antrean per-model untuk Mode Paralel Multi-Window
+ * ChatGPT dan ChatSmith dapat merespon serentak secara bersamaan tanpa saling menunggu!
+ */
+async function processParallelModelQueue(modelId) {
+  if (isProcessingModel.get(modelId)) return;
+  const queue = modelQueues.get(modelId);
+  if (!queue || queue.length === 0) return;
+
+  isProcessingModel.set(modelId, true);
+  const task = queue.shift();
+  let targetTabId = null;
+
+  try {
+    // 1. Dapatkan tab pada dedicated window untuk model ini
+    const tab = await getTabForModel(task.modelConfig);
+    if (!tab) {
+      throw new Error(`Could not find or open dedicated window/tab for model '${task.modelConfig.id}'`);
+    }
+    targetTabId = tab.id;
+
+    // 2. Pastikan tab aktif di window miliknya
+    await chrome.tabs.update(targetTabId, { active: true }).catch(() => {});
+
+    // 3. Sambungkan kembali content script jika perlu
+    await ensureContentScript(targetTabId);
+
+    // 4. Eksekusi prompt dan TUNGGU hingga respon model ini selesai
+    await new Promise(async (resolve, reject) => {
+      const timeoutMs = 120000;
+      const timer = setTimeout(() => {
+        activeRequests.delete(task.requestId);
+        reject(new Error(`Timeout waiting for AI response from model '${task.modelConfig.id}' after 120s`));
+      }, timeoutMs);
+
+      activeRequests.set(task.requestId, {
+        task,
+        targetTabId,
+        resolve: (val) => {
+          clearTimeout(timer);
+          resolve(val);
+        },
+        reject: (err) => {
+          clearTimeout(timer);
+          reject(err);
+        }
+      });
+
+      try {
+        const cdpResult = await nativeTypeAndSend(targetTabId, task.query, task.modelConfig);
+        if (cdpResult.success) {
+          await chrome.tabs.sendMessage(targetTabId, {
+            type: "waitForResponse",
+            requestId: task.requestId,
+            modelConfig: task.modelConfig,
+            query: task.query,
+            stream: task.stream,
+            initialCount: cdpResult.initialCount
+          });
+        } else {
+          await chrome.tabs.sendMessage(targetTabId, {
+            type: "executePrompt",
+            requestId: task.requestId,
+            modelConfig: task.modelConfig,
+            query: task.query,
+            stream: task.stream
+          });
+        }
+      } catch (err) {
+        clearTimeout(timer);
+        activeRequests.delete(task.requestId);
+        reject(err);
+      }
     });
 
-    processGlobalQueue();
+  } catch (err) {
+    console.error(`[ZeroLLM Parallel] Error processing model ${modelId}:`, err);
+    sendToBridge({
+      type: "streamError",
+      requestId: task.requestId,
+      error: err.message || "Failed to process prompt"
+    });
+  } finally {
+    activeRequests.delete(task.requestId);
+    isProcessingModel.set(modelId, false);
+
+    // Lanjutkan memproses antrean berikutnya untuk model ini jika ada
+    if (queue && queue.length > 0) {
+      processParallelModelQueue(modelId);
+    }
   }
 }
 
@@ -751,8 +928,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         bridgeUrl,
         roomId,
         apiKey,
-        models
+        models,
+        executionMode
       });
+      break;
+
+    case "setExecutionMode":
+      executionMode = msg.mode;
+      chrome.storage.local.set({ executionMode });
+      broadcastState();
+      sendResponse({ success: true, executionMode });
       break;
 
     case "connect":
@@ -782,7 +967,8 @@ function broadcastState() {
       bridgeUrl,
       roomId,
       apiKey,
-      models
+      models,
+      executionMode
     }
   }).catch(() => {});
 }
