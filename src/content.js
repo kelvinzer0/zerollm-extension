@@ -347,11 +347,6 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
       const hasMeaningfulText = meaningfulMarkdown.replace(/[`\s]/g, "").length > 0;
       const thinkingOnly = isThinkingOnly(markdown) || isThinkingOnly(meaningfulMarkdown);
 
-      // Auto-retry trigger submit jika dalam 3-5 poll pertama (1.5-2.5s) stream belum dimulai
-      if (pollCount >= 3 && pollCount <= 5 && !streamStarted && !isStreaming) {
-        triggerSendOrEnter(modelConfig);
-      }
-
       if (isNewContent && hasMeaningfulText && !thinkingOnly) {
         if (markdown !== lastMarkdown) {
           const delta = markdown.startsWith(lastMarkdown) ? 
@@ -481,6 +476,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     if (inputEl) {
       inputEl.focus();
+      // Bersihkan teks lama sebelum pengetikan teks baru agar tidak bertumpuk
+      if (inputEl.isContentEditable) {
+        document.execCommand("selectAll", false, null);
+        document.execCommand("delete", false, null);
+      } else {
+        inputEl.value = "";
+        inputEl.dispatchEvent(new Event("input", { bubbles: true }));
+      }
       const prevContainers = getResponseContainers(msg.modelConfig);
       sendResponse({ success: true, initialCount: prevContainers.length });
     } else {
@@ -499,9 +502,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Wait for AI response (used after Chrome Debugger native CDP typing)
   if (msg.type === "waitForResponse") {
     const { requestId, modelConfig, query, stream, initialCount } = msg;
-
-    // Cadangan picu kirim / enter jika belum terkirim
-    triggerSendOrEnter(modelConfig);
 
     observeCompletion(requestId, modelConfig, query, stream, initialCount || 0)
       .then(fullMarkdown => {

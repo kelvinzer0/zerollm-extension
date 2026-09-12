@@ -601,9 +601,8 @@ async function nativeTypeAndSend(tabId, text, modelConfig) {
       nativeVirtualKeyCode: 13
     });
 
-    // 4b. Cadangan klik tombol submit jika masih aktif
+    // Jeda singkat agar DOM React/Lexical memproses penekanan tombol Enter
     await new Promise(r => setTimeout(r, 200));
-    await chrome.tabs.sendMessage(tabId, { type: "clickSubmitIfActive", modelConfig }).catch(() => {});
 
     console.log(`[ZeroLLM CDP] Successfully typed and pressed Enter via Chrome Debugger on tab #${tabId}`);
     return { success: true, initialCount: focusRes?.initialCount || 0 };
