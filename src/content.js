@@ -99,6 +99,32 @@ function cleanHtmlToMarkdown(elementOrHtml) {
 }
 
 /**
+ * Resolve the chat area scope root element from modelConfig.responseScope
+ * All response detection will be constrained within this element.
+ * Falls back to document.body if no scope matches.
+ */
+function getScopeRoot(modelConfig) {
+  if (modelConfig?.responseScope) {
+    const selectors = modelConfig.responseScope.split(",").map(s => s.trim()).filter(Boolean);
+    for (const sel of selectors) {
+      try {
+        const el = document.querySelector(sel);
+        if (el && el.querySelector("*")) return el; // Must have children (not empty)
+      } catch (e) {}
+    }
+  }
+  // Fallback: try common chat area containers
+  const fallbacks = ["main", "[role='main']", "#__next", "#app", "#root"];
+  for (const sel of fallbacks) {
+    try {
+      const el = document.querySelector(sel);
+      if (el) return el;
+    } catch (e) {}
+  }
+  return document.body;
+}
+
+/**
  * Match a DOM element using CSS selector OR Regex test
  */
 function findElementByPattern(selectorOrRegex) {
@@ -145,8 +171,11 @@ function isValidResponseElement(el) {
   const tag = el.tagName.toLowerCase();
   if (["textarea", "input", "form", "script", "style", "head", "button", "nav", "header", "footer"].includes(tag)) return false;
 
-  // Tolak jika elemen berada di dalam composer/input/editor
-  if (el.closest("form, #prompt-textarea, [contenteditable='true'], [role='textbox'], .composer, footer, header, nav")) return false;
+  // Tolak jika elemen berada di dalam composer/input/editor/footer/sidebar
+  if (el.closest("form, #prompt-textarea, [contenteditable='true'], [role='textbox'], .composer, footer, header, nav, aside, [class*='sidebar'], [class*='footer'], [class*='disclaimer']")) return false;
+
+  // Tolak elemen footer/disclaimer berdasarkan selector
+  if (el.matches("footer, [class*='disclaimer'], [class*='footer'], [class*='bottom-bar'], [class*='legal'], [class*='copyright']")) return false;
 
   // Tolak jika merupakan pesan pengguna (user message)
   if (
@@ -161,27 +190,34 @@ function isValidResponseElement(el) {
   // Tolak teks kontrol UI yang pendek
   if (/^(auto|tulis pesan…|tulis pesan|write your prompt|type a message|salin|copy|share|more actions)$/i.test(text)) return false;
 
+  // Tolak teks disclaimer / notice yang sering salah ditangkap sebagai respon
+  const lowerText = text.toLowerCase();
+  if (/(?:dapat membuat kesalahan|may not be accurate|for reference only|can make mistakes|ai-generated|one more step|verify important|consider checking|not always accurate|mimo-v2|bisa saja salah|harap verifikasi|periksa info penting)/i.test(lowerText)) return false;
+
   return true;
 }
 
 /**
  * Find all matching assistant response containers
- * Multi-layer detection: Model Selector -> Well-Known AI Selectors -> Smart Action Anchor -> Semantic Turn -> Text Fallback
+ * SCOPED: All searches are constrained within responseScope area.
+ * Multi-layer detection: Model Selector -> Well-Known AI Selectors -> Smart Action Anchor -> Generic Fallback
  */
 function getResponseContainers(modelConfig) {
-  // 1. Coba selector spesifik dari modelConfig
+  const scope = getScopeRoot(modelConfig);
+
+  // 1. Coba selector spesifik dari modelConfig (SCOPED)
   if (modelConfig?.resultContainerSelector) {
     const parts = modelConfig.resultContainerSelector.split(",").map(s => s.trim()).filter(Boolean);
     for (const sel of parts) {
       try {
-        const found = document.querySelectorAll(sel);
+        const found = scope.querySelectorAll(sel);
         const valid = Array.from(found).filter(isValidResponseElement);
         if (valid.length > 0) return valid;
       } catch (e) {}
     }
   }
 
-  // 2. Coba selector standar industri & platform AI ternama
+  // 2. Coba selector standar industri & platform AI ternama (SCOPED)
   const wellKnownSelectors = [
     "div[data-message-author-role='assistant'] .markdown",
     "div[data-message-author-role='assistant']",
@@ -207,15 +243,15 @@ function getResponseContainers(modelConfig) {
 
   for (const sel of wellKnownSelectors) {
     try {
-      const found = document.querySelectorAll(sel);
+      const found = scope.querySelectorAll(sel);
       const valid = Array.from(found).filter(isValidResponseElement);
       if (valid.length > 0) return valid;
     } catch (e) {}
   }
 
-  // 3. SMART ANCHOR DISCOVERY: Temukan container lewat tombol aksi asisten (Copy / Salin / Regenerate)
+  // 3. SMART ANCHOR DISCOVERY (SCOPED): Temukan container lewat tombol aksi asisten
   try {
-    const actionButtons = document.querySelectorAll(
+    const actionButtons = scope.querySelectorAll(
       "button[aria-label*='Copy' i], button[aria-label*='Salin' i], button[aria-label*='复制'], " +
       "button[title*='Copy' i], button[title*='Salin' i], button[title*='复制'], " +
       "button[aria-label*='Good' i], button[aria-label*='Bagus' i], button[aria-label*='赞'], " +
@@ -231,7 +267,7 @@ function getResponseContainers(modelConfig) {
       if (!parent) {
         parent = btn.parentElement?.parentElement?.parentElement || btn.parentElement?.parentElement;
       }
-      if (parent && !seen.has(parent) && isValidResponseElement(parent)) {
+      if (parent && !seen.has(parent) && isValidResponseElement(parent) && scope.contains(parent)) {
         seen.add(parent);
         anchorContainers.push(parent);
       }
@@ -242,7 +278,7 @@ function getResponseContainers(modelConfig) {
     }
   } catch (e) {}
 
-  // 4. Coba selector elemen umum dengan teks markdown di dalam area chat (bukan user)
+  // 4. Coba selector elemen umum (SCOPED) dengan teks markdown di dalam area chat
   const genericSelectors = [
     "article:not([class*='user'])",
     ".markdown:not([class*='user'])",
@@ -253,7 +289,7 @@ function getResponseContainers(modelConfig) {
 
   for (const sel of genericSelectors) {
     try {
-      const found = document.querySelectorAll(sel);
+      const found = scope.querySelectorAll(sel);
       const valid = Array.from(found).filter(isValidResponseElement);
       if (valid.length > 0) return valid;
     } catch (e) {}
@@ -263,9 +299,9 @@ function getResponseContainers(modelConfig) {
 }
 
 /**
- * DOM Diffing & Positional Turn Tracker:
+ * DOM Diffing & Positional Turn Tracker (SCOPED):
  * Menemukan respon asisten dengan mencari elemen yang muncul tepat SETELAH teks prompt user
- * dalam urutan DOM percakapan.
+ * dalam urutan DOM percakapan. Pencarian dibatasi dalam responseScope.
  */
 function findAssistantResponseByDOMDiff(query, modelConfig) {
   if (!query || typeof query !== "string") return null;
@@ -275,8 +311,11 @@ function findAssistantResponseByDOMDiff(query, modelConfig) {
   const sample = cleanQ.slice(0, Math.min(cleanQ.length, 35));
   if (!sample) return null;
 
-  // 1. Cari elemen teks di chat body yang memuat teks prompt user
-  const candidates = Array.from(document.querySelectorAll("p, div, article, span, li"));
+  // SCOPED: Cari hanya di dalam responseScope area
+  const scope = getScopeRoot(modelConfig);
+
+  // 1. Cari elemen teks di chat body yang memuat teks prompt user (SCOPED)
+  const candidates = Array.from(scope.querySelectorAll("p, div, article, span, li"));
   let userTurnEl = null;
 
   for (let i = candidates.length - 1; i >= 0; i--) {
@@ -296,11 +335,11 @@ function findAssistantResponseByDOMDiff(query, modelConfig) {
     // 2. Cari elemen asisten yang berada SETELAH userTurnEl di dalam DOM
     let nextNode = userTurnEl.nextElementSibling;
     while (nextNode) {
-      if (isValidResponseElement(nextNode)) {
+      if (isValidResponseElement(nextNode) && scope.contains(nextNode)) {
         return nextNode;
       }
       const innerMessage = nextNode.querySelector("article, [class*='message'], .markdown, div");
-      if (innerMessage && isValidResponseElement(innerMessage)) {
+      if (innerMessage && isValidResponseElement(innerMessage) && scope.contains(innerMessage)) {
         return innerMessage;
       }
       nextNode = nextNode.nextElementSibling;
@@ -308,13 +347,13 @@ function findAssistantResponseByDOMDiff(query, modelConfig) {
 
     // Cek parent level jika turn user dibungkus dalam wrapper div
     let parent = userTurnEl.parentElement;
-    while (parent && parent !== document.body && parent.tagName.toLowerCase() !== "main") {
+    while (parent && parent !== document.body && parent !== scope && parent.tagName.toLowerCase() !== "main") {
       if (parent.nextElementSibling) {
         let sibling = parent.nextElementSibling;
         while (sibling) {
-          if (isValidResponseElement(sibling)) return sibling;
+          if (isValidResponseElement(sibling) && scope.contains(sibling)) return sibling;
           const inner = sibling.querySelector("article, [class*='message'], .markdown, div");
-          if (inner && isValidResponseElement(inner)) return inner;
+          if (inner && isValidResponseElement(inner) && scope.contains(inner)) return inner;
           sibling = sibling.nextElementSibling;
         }
       }
@@ -682,6 +721,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   // Prepare input element and focus before Chrome Debugger CDP typing
+  // If msg.query is provided, type directly via enterPrompt (bypasses CDP focus loss on ProseMirror)
   if (msg.type === "focusInput") {
     (async () => {
       // 1. Tutup modal/banner promosi atau dialog error yang menghalangi
@@ -702,19 +742,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
 
       if (inputEl) {
-        inputEl.focus();
-        // Bersihkan teks lama sebelum pengetikan teks baru agar tidak bertumpuk
-        if (inputEl.isContentEditable) {
-          document.execCommand("selectAll", false, null);
-          document.execCommand("delete", false, null);
-        } else {
-          inputEl.value = "";
-          inputEl.dispatchEvent(new Event("input", { bubbles: true }));
-        }
         const prevContainers = getResponseContainers(msg.modelConfig);
         const lastEl = prevContainers.length > 0 ? prevContainers[prevContainers.length - 1] : null;
         const initialText = lastEl ? cleanResultMarkdown(cleanHtmlToMarkdown(lastEl.innerHTML || lastEl)) : "";
-        sendResponse({ success: true, initialCount: prevContainers.length, initialText });
+
+        // Jika query dikirim langsung: ketik dan submit di content.js (bypass CDP focus loss)
+        if (msg.query) {
+          await enterPrompt(inputEl, msg.query);
+          sendResponse({ success: true, directTyped: true, initialCount: prevContainers.length, initialText });
+        } else {
+          // Legacy: hanya fokus dan bersihkan, biarkan CDP mengetik
+          inputEl.focus();
+          if (inputEl.isContentEditable) {
+            // Untuk ProseMirror: JANGAN execCommand("delete") karena kehilangan fokus.
+            // Cukup selectAll, lalu CDP akan replace via insertText.
+            document.execCommand("selectAll", false, null);
+          } else {
+            inputEl.value = "";
+            inputEl.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+          sendResponse({ success: true, initialCount: prevContainers.length, initialText });
+        }
       } else {
         sendResponse({ success: false, error: "Input not found or still loading after 12s" });
       }

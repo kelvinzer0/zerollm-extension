@@ -707,15 +707,27 @@ async function nativeTypeAndSend(tabId, text, modelConfig) {
   let attached = false;
 
   try {
-    // 1. Minta content script fokus ke input box terlebih dahulu & ambil initialCount
+    // 1. Minta content script fokus ke input box DAN langsung ketik teks via enterPrompt
+    //    Ini mengatasi masalah ProseMirror (ChatGPT) yang kehilangan fokus saat CDP digunakan
     const focusRes = await chrome.tabs.sendMessage(tabId, {
       type: "focusInput",
-      modelConfig
+      modelConfig,
+      query: text  // Kirim teks langsung agar content.js ketik via enterPrompt
     }).catch(() => null);
+
+    // Jika content.js sudah mengetik langsung (directTyped), skip CDP sepenuhnya
+    if (focusRes?.directTyped) {
+      console.log(`[ZeroLLM CDP] Text typed directly by content.js enterPrompt (bypassed CDP) on tab #${tabId}`);
+      return {
+        success: true,
+        initialCount: focusRes?.initialCount || 0,
+        initialText: focusRes?.initialText || ""
+      };
+    }
 
     await new Promise(r => setTimeout(r, 200));
 
-    // 2. Attach Chrome Debugger
+    // 2. Fallback: Attach Chrome Debugger untuk mengetik via CDP
     await chrome.debugger.attach(debuggee, "1.3");
     attached = true;
 
