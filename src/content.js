@@ -69,8 +69,11 @@ function cleanHtmlToMarkdown(elementOrHtml) {
 
   const parsed = walk(doc.body || doc).replace(/\n{3,}/g, "\n\n").trim();
   if (!parsed && (elementOrHtml instanceof Element || (doc && doc.body))) {
-    const rawText = (doc.body || elementOrHtml).innerText || "";
-    return rawText.trim();
+    const rawText = ((doc.body || elementOrHtml).innerText || "").trim();
+    if (isThinkingOnly(rawText)) {
+      return "";
+    }
+    return rawText;
   }
   return parsed;
 }
@@ -153,12 +156,16 @@ function checkIsDone(modelConfig) {
 function isThinkingOnly(text) {
   if (!text) return false;
   const cleaned = text.trim().toLowerCase();
-  return /^(thinking(\.{0,3}|…)?|menalar(\.{0,3}|…)?|sedang berpikir(\.{0,3}|…)?)$/i.test(cleaned);
+  return /^(thinking(\.{0,3}|…)?|menalar(\.{0,3}|…)?|sedang berpikir(\.{0,3}|…)?|berhenti berpikir|stop thinking|berpikir(\.{0,3}|…)?|(?:berpikir|menalar)\s+selama\s+.*|thought\s+for\s+.*)$/i.test(cleaned);
 }
 
 function cleanResultMarkdown(markdown) {
   if (!markdown) return "";
-  let cleaned = markdown.replace(/^(?:#+\s*)?Thinking(?:\.{0,3}|…)?\s*\n+/i, "");
+  let cleaned = markdown
+    .replace(/^(?:#+\s*)?(?:Thinking|Menalar|Sedang berpikir|Berhenti berpikir|Stop thinking)(?:\.{0,3}|…)?\s*\n+/gi, "")
+    .replace(/^(?:Berhenti berpikir|Stop thinking)\s*\n+/gi, "")
+    .replace(/^(?:Berpikir|Menalar)\s+selama\s+[^\n]+\n+/gi, "")
+    .replace(/^(?:Thought for\s+[^\n]+)\n+/gi, "");
   return cleaned.trim() || markdown.trim();
 }
 
@@ -335,9 +342,10 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
       const markdown = cleanHtmlToMarkdown(rawHtml || latestResponseEl || "");
 
       // Validasi: Apakah teks ini benar-benar respon baru (bukan teks lama sebelum prompt terkirim)?
+      const meaningfulMarkdown = cleanResultMarkdown(markdown);
       const isNewContent = hasNewContainer || (markdown !== initialLastMarkdown && initialLastMarkdown !== "") || isStreaming;
-      const hasMeaningfulText = markdown.replace(/[`\s]/g, "").length > 0;
-      const thinkingOnly = isThinkingOnly(markdown);
+      const hasMeaningfulText = meaningfulMarkdown.replace(/[`\s]/g, "").length > 0;
+      const thinkingOnly = isThinkingOnly(markdown) || isThinkingOnly(meaningfulMarkdown);
 
       // Auto-retry trigger submit jika dalam 3-5 poll pertama (1.5-2.5s) stream belum dimulai
       if (pollCount >= 3 && pollCount <= 5 && !streamStarted && !isStreaming) {
