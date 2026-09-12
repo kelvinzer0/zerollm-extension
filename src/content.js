@@ -120,6 +120,8 @@ function findElementByPattern(selectorOrRegex) {
 function getResponseContainers(modelConfig) {
   const selectors = [
     modelConfig.resultContainerSelector,
+    "[class*='assistantMessage'] [class*='messageCopy']",
+    "[class*='assistantMessage']",
     "[data-message-author-role='assistant']",
     ".markdown",
     "article",

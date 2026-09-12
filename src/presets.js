@@ -23,10 +23,10 @@ export const DEFAULT_PRESETS = [
     urlPattern: "*://chatgpt.com/*",
     startChatSelector: "#prompt-textarea, textarea[id='prompt-textarea'], div#prompt-textarea, [data-testid='prompt-textarea'], #mobile-composer-prompt, textarea[id*='composer'], [placeholder*='Message'], [placeholder*='Tanya ChatGPT'], [aria-label*='ChatGPT'], [aria-label*='prompt']",
     continueChatSelector: "#prompt-textarea, textarea[id='prompt-textarea'], div#prompt-textarea, [data-testid='prompt-textarea'], #mobile-composer-prompt, textarea[id*='composer'], [placeholder*='Message'], [placeholder*='Tanya ChatGPT'], [aria-label*='ChatGPT'], [aria-label*='prompt']",
-    streamSelector: "button[data-testid='stop-button'], button[aria-label*='Berhenti'], button[aria-label*='Stop'], [data-testid='fruitjuice-send-button']:has(svg path[d*='M2 12'])",
-    doneSelector: "button[data-testid='send-button']:not([disabled]), button[aria-label*='Kirim']:not([disabled]), button[aria-label*='Send']:not([disabled]), button[data-testid='fruitjuice-send-button']:not([disabled])",
-    resultContainerSelector: "[data-message-author-role='assistant'] .markdown, [data-message-author-role='assistant'], article [data-message-author-role='assistant'], .agent-turn",
-    description: "Official OpenAI ChatGPT Web Interface (Desktop & Mobile DOM)"
+    streamSelector: "button[aria-label*='Berhenti'], button[data-testid='stop-button'], button[aria-label*='Stop'], [data-testid='fruitjuice-send-button']:has(svg path[d*='M2 12'])",
+    doneSelector: "button.wm-composer-submitButton:not([disabled]), button[data-testid='send-button']:not([disabled]), button[aria-label*='Kirim']:not([disabled]), button[aria-label*='Send']:not([disabled])",
+    resultContainerSelector: "[class*='assistantMessage'] [class*='messageCopy'], [class*='assistantMessage'], [data-message-author-role='assistant'] .markdown, [data-message-author-role='assistant'], article [data-message-author-role='assistant'], [class*='agent-turn']",
+    description: "Official OpenAI ChatGPT Web Interface (Desktop & Mobile DOM Verified Live)"
   },
   {
     id: "chatsmith",
