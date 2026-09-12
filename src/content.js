@@ -283,6 +283,8 @@ function cleanResultMarkdown(markdown) {
   if (!markdown) return "";
   let cleaned = markdown
     .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    // Hapus header accessibility Claude
+    .replace(/^(?:#+\s*)?(?:Claude merespons:|Claude's response:|Claude:\s*)\s*/gi, "")
     // Hapus header thinking Qwen, DeepSeek, ChatGPT, Claude, Gemini, dll
     .replace(/^(?:#+\s*)?(?:Thinking completed|Thinking process|Thought process|Thinking|Menalar|Sedang berpikir|Berhenti berpikir|Stop thinking|已完成思考|思考过程)(?:\.{0,3}|…)?\s*(?:\n+|$)/gi, "")
     .replace(/^(?:Berhenti berpikir|Stop thinking)\s*\n+/gi, "")
