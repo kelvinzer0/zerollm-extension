@@ -137,14 +137,42 @@ function getResponseContainers(modelConfig) {
   return [];
 }
 
+function checkIsDone(modelConfig) {
+  if (!modelConfig.doneSelector) return false;
+  const el = findElementByPattern(modelConfig.doneSelector);
+  if (el) {
+    const isVisible = el.offsetParent !== null || window.getComputedStyle(el).display !== "none";
+    const isEnabled = !el.disabled && !el.hasAttribute("disabled") && el.getAttribute("aria-disabled") !== "true";
+    return isVisible && isEnabled;
+  }
+  return false;
+}
+
+function isThinkingOnly(text) {
+  if (!text) return false;
+  const cleaned = text.trim().toLowerCase();
+  return /^(thinking(\.{0,3}|…)?|menalar(\.{0,3}|…)?|sedang berpikir(\.{0,3}|…)?)$/i.test(cleaned);
+}
+
+function cleanResultMarkdown(markdown) {
+  if (!markdown) return "";
+  let cleaned = markdown.replace(/^(?:#+\s*)?Thinking(?:\.{0,3}|…)?\s*\n+/i, "");
+  return cleaned.trim() || markdown.trim();
+}
+
 /**
  * Check if the page is currently streaming
  */
 function checkIsStreaming(modelConfig) {
-  if (!modelConfig.streamSelector) return false;
-  const el = findElementByPattern(modelConfig.streamSelector);
-  if (el) {
-    return el.offsetParent !== null || window.getComputedStyle(el).display !== "none";
+  if (modelConfig.streamSelector) {
+    const el = findElementByPattern(modelConfig.streamSelector);
+    if (el && (el.offsetParent !== null || window.getComputedStyle(el).display !== "none")) {
+      return true;
+    }
+  }
+  const genericStream = document.querySelector(".streaming, [data-is-streaming='true'], .typing-indicator");
+  if (genericStream && (genericStream.offsetParent !== null || window.getComputedStyle(genericStream).display !== "none")) {
+    return true;
   }
   return false;
 }
@@ -228,8 +256,9 @@ async function executeTabCompletion(requestId, modelConfig, query, streamMode) {
   return new Promise((resolve, reject) => {
     let lastMarkdown = "";
     let streamStarted = false;
+    let stableCount = 0;
     let pollCount = 0;
-    const maxPolls = 120; // 60 seconds max
+    const maxPolls = 180; // 90 seconds max
 
     const interval = setInterval(() => {
       pollCount++;
@@ -249,40 +278,57 @@ async function executeTabCompletion(requestId, modelConfig, query, streamMode) {
       }
 
       const isStreaming = checkIsStreaming(modelConfig);
+      const isDone = checkIsDone(modelConfig);
       const markdown = cleanHtmlToMarkdown(rawHtml || latestResponseEl || "");
 
       // Validate meaningful text
       const hasMeaningfulText = markdown.replace(/[`\s]/g, "").length > 0;
+      const thinkingOnly = isThinkingOnly(markdown);
 
-      if (hasMeaningfulText && markdown !== lastMarkdown) {
-        const delta = markdown.startsWith(lastMarkdown) ? 
-                      markdown.slice(lastMarkdown.length) : 
-                      markdown;
-        
-        lastMarkdown = markdown;
-        streamStarted = true;
+      if (hasMeaningfulText && !thinkingOnly) {
+        if (markdown !== lastMarkdown) {
+          const delta = markdown.startsWith(lastMarkdown) ? 
+                        markdown.slice(lastMarkdown.length) : 
+                        markdown;
+          
+          lastMarkdown = markdown;
+          streamStarted = true;
+          stableCount = 0; // Text is actively changing
 
-        if (streamMode && delta) {
-          chrome.runtime.sendMessage({
-            type: "stream",
-            requestId,
-            delta: { content: delta }
-          });
+          if (streamMode && delta) {
+            chrome.runtime.sendMessage({
+              type: "stream",
+              requestId,
+              delta: { content: delta }
+            });
+          }
+        } else {
+          // Text has not changed in this poll
+          stableCount++;
         }
+      } else {
+        // Still waiting or thinking
+        stableCount = 0;
       }
 
-      // Selesai jika stream sudah dimulai, ada teks jawaban, dan isStreaming sudah bernilai false
-      if (streamStarted && hasMeaningfulText && !isStreaming && pollCount > 3) {
+      // Selesai jika:
+      // 1. Stream sudah mulai dan ada teks jawaban nyata (bukan cuma placeholder "Thinking")
+      // 2. Tidak lagi dalam status streaming
+      // 3. Teks stabil (tidak berubah):
+      //    - Jika isDone terdeteksi (send button kembali aktif/enabled): minimal 2 poll (1 detik)
+      //    - Jika isDone tidak terdeteksi: minimal 4 poll (2 detik) stabil
+      const stableThreshold = isDone ? 2 : 4;
+      if (streamStarted && hasMeaningfulText && !thinkingOnly && !isStreaming && stableCount >= stableThreshold && pollCount > 4) {
         clearInterval(interval);
-        resolve(lastMarkdown);
+        resolve(cleanResultMarkdown(lastMarkdown));
         return;
       }
 
       // Safety timeout
       if (pollCount >= maxPolls) {
         clearInterval(interval);
-        if (lastMarkdown && hasMeaningfulText) {
-          resolve(lastMarkdown);
+        if (lastMarkdown && hasMeaningfulText && !thinkingOnly) {
+          resolve(cleanResultMarkdown(lastMarkdown));
         } else {
           reject(new Error("Timeout waiting for AI response from page DOM"));
         }
