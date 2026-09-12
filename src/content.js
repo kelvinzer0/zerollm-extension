@@ -143,10 +143,25 @@ function findElementByPattern(selectorOrRegex) {
 function isValidResponseElement(el) {
   if (!el || !(el instanceof Element)) return false;
   const tag = el.tagName.toLowerCase();
-  if (["textarea", "input", "form", "script", "style", "head"].includes(tag)) return false;
+  if (["textarea", "input", "form", "script", "style", "head", "button", "nav", "header", "footer"].includes(tag)) return false;
+
+  // Tolak jika elemen berada di dalam composer/input/editor
+  if (el.closest("form, #prompt-textarea, [contenteditable='true'], [role='textbox'], .composer, footer, header, nav")) return false;
+
+  // Tolak jika merupakan pesan pengguna (user message)
+  if (
+    el.matches("[data-message-author-role='user'], [data-testid='user-message'], [class*='user-message'], [class*='userMessage'], [class*='font-user']") ||
+    el.closest("[data-message-author-role='user'], [data-testid='user-message'], [class*='user-message'], [class*='userMessage'], [class*='font-user']")
+  ) return false;
+
   // Cek apakah memiliki dimensi atau teks bermakna
   const text = (el.innerText || el.textContent || "").replace(/[\u200B-\u200D\uFEFF\s]/g, "");
-  return text.length > 0;
+  if (!text || text.length < 2) return false;
+
+  // Tolak teks kontrol UI yang pendek
+  if (/^(auto|tulis pesan…|tulis pesan|write your prompt|type a message|salin|copy|share|more actions)$/i.test(text)) return false;
+
+  return true;
 }
 
 /**
@@ -168,10 +183,10 @@ function getResponseContainers(modelConfig) {
 
   // 2. Coba selector standar industri & platform AI ternama
   const wellKnownSelectors = [
+    "div[data-message-author-role='assistant'] .markdown",
     "div[data-message-author-role='assistant']",
-    ".agent-turn [data-message-author-role='assistant']",
-    "[data-message-author-role='assistant']",
-    "div[data-is-streaming]",
+    ".agent-turn div[data-message-author-role='assistant']",
+    "div[data-is-streaming='true']",
     "div[data-testid='chat-message']:not([data-testid='user-message'])",
     ".font-claude-message",
     "[class*='font-claude']",
@@ -227,14 +242,13 @@ function getResponseContainers(modelConfig) {
     }
   } catch (e) {}
 
-  // 4. Coba selector elemen umum dengan teks markdown di dalam area chat
+  // 4. Coba selector elemen umum dengan teks markdown di dalam area chat (bukan user)
   const genericSelectors = [
-    "article",
-    ".markdown",
-    "[class*='markdown']",
-    "[class*='prose']",
-    ".chat-content",
-    "[class*='chat-content']"
+    "article:not([class*='user'])",
+    ".markdown:not([class*='user'])",
+    "[class*='markdown']:not([class*='user'])",
+    ".chat-content:not([class*='user'])",
+    "[class*='chat-content']:not([class*='user'])"
   ];
 
   for (const sel of genericSelectors) {
@@ -244,19 +258,6 @@ function getResponseContainers(modelConfig) {
       if (valid.length > 0) return valid;
     } catch (e) {}
   }
-
-  // 5. ULTIMATE FALLBACK: Cari elemen pesan terakhir di dalam area chat utama
-  try {
-    const mainEl = document.querySelector("main, [role='main'], #chat-container, .chat-container") || document.body;
-    const blocks = mainEl.querySelectorAll("p, pre, div[class*='text'], div[class*='content']");
-    if (blocks.length > 0) {
-      const lastBlock = blocks[blocks.length - 1];
-      const bubble = lastBlock.closest("div:not(main):not(body)") || lastBlock;
-      if (isValidResponseElement(bubble)) {
-        return [bubble];
-      }
-    }
-  } catch (e) {}
 
   return [];
 }
@@ -458,7 +459,12 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
       const isDifferentFromInitial = !initialText || meaningfulMarkdown !== initialText;
       const hasMeaningfulText = meaningfulMarkdown.replace(/[`\s]/g, "").length > 0;
 
-      if (hasMeaningfulText && !thinkingOnly && (hasNewContainer || isDifferentFromInitial || isStreaming)) {
+      // Filter out user message reflections (jangan anggap teks prompt sebagai jawaban)
+      const normalizedQuery = (query || "").replace(/[\u200B-\u200D\uFEFF\s]/g, "").toLowerCase();
+      const normalizedResponse = meaningfulMarkdown.replace(/[\u200B-\u200D\uFEFF\s]/g, "").toLowerCase();
+      const isUserEcho = normalizedQuery.length > 0 && (normalizedResponse === normalizedQuery || (normalizedResponse.startsWith(normalizedQuery) && normalizedResponse.length <= normalizedQuery.length + 5));
+
+      if (hasMeaningfulText && !thinkingOnly && !isUserEcho && (hasNewContainer || isDifferentFromInitial || isStreaming)) {
         if (meaningfulMarkdown !== lastMarkdown) {
           const delta = meaningfulMarkdown.startsWith(lastMarkdown) ? 
                         meaningfulMarkdown.slice(lastMarkdown.length) : 

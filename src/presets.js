@@ -34,7 +34,7 @@ export const DEFAULT_PRESETS = [
     continueChatSelector: "#prompt-textarea, textarea[id='prompt-textarea'], div#prompt-textarea, [data-testid='prompt-textarea'], #mobile-composer-prompt, textarea[id*='composer'], textarea[placeholder], textarea, [contenteditable='true']",
     streamSelector: "button[data-testid='stop-button'], button[aria-label*='Berhenti'], button[aria-label*='Stop'], button.bg-black .icon-lg, [data-testid='fruitjuice-send-button']:has(svg path[d*='M2 12'])",
     doneSelector: "button[data-testid='send-button']:not([disabled]), button.wm-composer-submitButton:not([disabled]), button[aria-label*='Kirim']:not([disabled]), button[aria-label*='Send']:not([disabled])",
-    resultContainerSelector: "div[data-message-author-role='assistant'], .agent-turn div[data-message-author-role='assistant'], article [data-message-author-role='assistant'], [class*='assistantMessage'], [class*='agent-turn']",
+    resultContainerSelector: "div[data-message-author-role='assistant'] .markdown, div[data-message-author-role='assistant'], article:has([data-message-author-role='assistant'])",
     description: "Official OpenAI ChatGPT Web Interface (GPT-4o, o1, o3-mini)"
   },
   {
@@ -62,7 +62,7 @@ export const DEFAULT_PRESETS = [
     continueChatSelector: "div[contenteditable='true'], fieldset div[contenteditable='true'], [aria-label*='Write your prompt'], div.ProseMirror, textarea",
     streamSelector: "button[aria-label*='Stop response'], button[aria-label*='Stop'], button[aria-label*='Berhenti'], .stop-button, button[aria-label*='Stop generating'], [data-is-streaming='true']",
     doneSelector: "button[aria-label*='Send Message']:not([disabled]), button[aria-label*='Send']:not([disabled]), button[aria-label*='Kirim']:not([disabled]), button:has(svg path[d*='M2 12']):not([disabled])",
-    resultContainerSelector: "div[data-is-streaming], div[data-testid='chat-message']:not([data-testid='user-message']), article:has(button[aria-label*='Salin'], button[aria-label*='Copy']), div[class*='font-claude'], .font-claude-message, [class*='prose']",
+    resultContainerSelector: "div[data-is-streaming='true'], div[data-testid='chat-message']:not([data-testid='user-message']), article:has(button[aria-label*='Salin'], button[aria-label*='Copy']), div.font-claude-message, [data-is-streaming='false']",
     description: "Anthropic Claude Web Interface (Claude 3.5 Sonnet & Haiku)"
   },
   {
@@ -146,7 +146,7 @@ export const DEFAULT_PRESETS = [
     continueChatSelector: "textarea[placeholder*='问问'], textarea[placeholder*='Type a message'], textarea[placeholder*='Ask'], textarea, [contenteditable='true']",
     streamSelector: "button[class*='stop'], button:has([class*='stop']), [aria-label*='停止生成'], button[aria-label*='Stop'], button[aria-label*='Berhenti']",
     doneSelector: "button[class*='send']:not([disabled]), button[type='submit']:not([disabled]), button[aria-label*='Send']:not([disabled])",
-    resultContainerSelector: "div:has(> button[aria-label*='Copy'], button:has(svg path)), div[class*='message']:not([class*='user']):has(button), div[class*='chat-item']:not([class*='user']), [class*='message-item-assistant'], [class*='chat-item--assistant'], [class*='contentBlock'], .qwen-markdown, .markdown",
+    resultContainerSelector: ".qwen-markdown, [class*='qwen-markdown'], div[class*='contentBlock']:not([class*='user']), div[class*='chat-message']:not([class*='user']) .markdown, div:has(> button[aria-label*='Copy'], button[title*='Copy'])",
     description: "Alibaba Tongyi Qwen AI Web Interface (Qwen 2.5 / Max)"
   },
   {
