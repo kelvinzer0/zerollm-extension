@@ -47,7 +47,7 @@ export const DEFAULT_PRESETS = [
     newChatUrl: "https://chatsmith.io/",
     urlPattern: "*://chatsmith.io/*",
     responseScope: "main, [class*='content-layout'], [class*='chat-area'], [class*='message-list'], [class*='conversation'], [class*='chat-body']",
-    newChatSelector: "[aria-label*='New chat'], .new-chat-btn, a[href='/conversation'], button:has(svg path[d*='M12 4'])\",
+    newChatSelector: "[aria-label*='New chat'], .new-chat-btn, a[href='/conversation'], button:has(svg path[d*='M12 4'])",
     startChatSelector: "[contenteditable='true'], div.ProseMirror, textarea, [aria-label*='Chat Smith'], [placeholder*='Talk with Chat Smith']",
     continueChatSelector: "[contenteditable='true'], div.ProseMirror, textarea, [aria-label*='Chat Smith'], [placeholder*='Talk with Chat Smith']",
     streamSelector: "button[aria-label*='Stop'], button.stop-button, .streaming, .typing-indicator, [class*='stop'], button:has([class*='stop'])",
