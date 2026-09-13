@@ -544,12 +544,15 @@ function parseToolCalls(text) {
     });
   }
 
-  // Pola 1b: <tool_call>{"name": "...", "arguments": {...}}</tool_call>
+  // Pola 1b: <tool_call>...</tool_call> (Mendukung JSON murni ATAU XML function/parameter bawaan model seperti Xiaomi MiMo)
   if (calls.length === 0) {
     const xmlToolRegex = /<tool_call[^>]*>([\s\S]*?)<\/tool_call>/gi;
     while ((match = xmlToolRegex.exec(text)) !== null) {
+      const inner = match[1].trim();
+
+      // 1b.1 Coba parsing jika isi blok <tool_call> adalah JSON
       try {
-        const obj = JSON.parse(match[1].trim());
+        const obj = JSON.parse(inner);
         const fnName = obj.name || obj.tool;
         const args = obj.arguments || obj.parameters || {};
         if (fnName) {
@@ -561,8 +564,69 @@ function parseToolCalls(text) {
               arguments: typeof args === "string" ? args : JSON.stringify(args)
             }
           });
+          continue;
         }
       } catch(e) {}
+
+      // 1b.2 Parsing XML function & parameter (Format bawaan Xiaomi MiMo, DeepSeek, & Anthropic/Claude):
+      // <function=read> atau <function name="read"> atau <invoke name="read">
+      const fnMatch = inner.match(/<(?:function|invoke)(?:=|\s+name=)["\x27]?([\w_-]+)["\x27]?[^>]*>/i);
+      if (fnMatch) {
+        const fnName = fnMatch[1];
+        const argsObj = {};
+
+        // Tangkap parameter: <parameter=path>value</parameter> atau <parameter=path>value
+        // atau <parameter name="path">value</parameter>
+        const paramRegex = /<parameter(?:=|\s+name=)["\x27]?([\w_-]+)["\x27]?[^>]*>([\s\S]*?)(?:<\/parameter>|(?=<parameter|<\/tool_call>|$))/gi;
+        let pMatch;
+        while ((pMatch = paramRegex.exec(inner)) !== null) {
+          const key = pMatch[1];
+          let val = pMatch[2].trim();
+          try {
+            val = JSON.parse(val);
+          } catch(e) {}
+          argsObj[key] = val;
+        }
+
+        calls.push({
+          id: `call_${Math.random().toString(36).substring(2, 10)}`,
+          type: "function",
+          function: {
+            name: fnName,
+            arguments: JSON.stringify(argsObj)
+          }
+        });
+      }
+    }
+  }
+
+  // Fallback Pola 1b.3: Deteksi XML <function=...> langsung tanpa pembungkus <tool_call>
+  if (calls.length === 0) {
+    const standaloneFnRegex = /<(?:function|invoke)(?:=|\s+name=)["\x27]?([\w_-]+)["\x27]?[^>]*>([\s\S]*?)(?:<\/(?:function|invoke)>|$)/gi;
+    while ((match = standaloneFnRegex.exec(text)) !== null) {
+      const fnName = match[1];
+      const inner = match[2].trim();
+      const argsObj = {};
+      const paramRegex = /<parameter(?:=|\s+name=)["\x27]?([\w_-]+)["\x27]?[^>]*>([\s\S]*?)(?:<\/parameter>|(?=<parameter|$))/gi;
+      let pMatch;
+      let foundParams = false;
+      while ((pMatch = paramRegex.exec(inner)) !== null) {
+        foundParams = true;
+        const key = pMatch[1];
+        let val = pMatch[2].trim();
+        try { val = JSON.parse(val); } catch(e) {}
+        argsObj[key] = val;
+      }
+      if (foundParams) {
+        calls.push({
+          id: `call_${Math.random().toString(36).substring(2, 10)}`,
+          type: "function",
+          function: {
+            name: fnName,
+            arguments: JSON.stringify(argsObj)
+          }
+        });
+      }
     }
   }
 
