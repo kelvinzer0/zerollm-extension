@@ -398,6 +398,61 @@ async function waitForTabComplete(tabId, maxWaitMs = 15000) {
 }
 
 /**
+ * Mengecek apakah tab saat ini berada di percakapan/thread lama (bukan Home Area),
+ * dan jika ya, otomatis navigasikan tab ke Home Area URL sebelum input dan send.
+ */
+async function navigateToHomeAreaIfNeeded(tabId, modelConfig) {
+  try {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab || !tab.url) return;
+
+    const currentUrl = tab.url;
+    let homeUrl = modelConfig.newChatUrl || modelConfig.defaultUrl;
+    if (!homeUrl && modelConfig.urlPattern) {
+      homeUrl = modelConfig.urlPattern.replace(/^\*:\/\//, "https://").replace(/\*+/g, "");
+      if (!homeUrl.startsWith("http")) {
+        homeUrl = "https://" + homeUrl.replace(/^[:\/]+/, "");
+      }
+    }
+    if (!homeUrl) return;
+
+    // Normalisasi URL untuk perbandingan (abaikan trailing slash)
+    const normCurrent = currentUrl.replace(/\/+$/, "");
+    const normHome = homeUrl.replace(/\/+$/, "");
+
+    // Jika tab sudah berada di Home Area, tidak perlu navigasi ulang
+    if (normCurrent === normHome) {
+      return;
+    }
+
+    // Deteksi sub-path thread / percakapan lama:
+    // - Xiaomi MiMo: /#/chat/005911d30ed78fcc...
+    // - ChatGPT: /c/6aa56251...
+    // - Claude: /chat/985ae002...
+    // - DeepSeek: /a/chat/s/1e432207...
+    // - Qwen: /c/a46e1f3a...
+    // - ChatSmith: /conversation/c9491388...
+    const isOldThread = 
+      /\/#\/chat\/[a-zA-Z0-9_-]+/i.test(currentUrl) ||
+      /\/c\/[a-zA-Z0-9_-]+/i.test(currentUrl) ||
+      /\/chat\/[a-zA-Z0-9_-]+/i.test(currentUrl) ||
+      /\/conversation\/[a-zA-Z0-9_-]+/i.test(currentUrl) ||
+      /\/thread\/[a-zA-Z0-9_-]+/i.test(currentUrl) ||
+      /\/s\/[a-zA-Z0-9_-]+/i.test(currentUrl);
+
+    if (isOldThread) {
+      console.log(`[ZeroLLM Navigation] Tab #${tabId} terdeteksi di percakapan lama (${currentUrl}). Navigasi ke Home Area: ${homeUrl}...`);
+      await chrome.tabs.update(tabId, { url: homeUrl });
+      await waitForTabComplete(tabId, 15000);
+      await new Promise(r => setTimeout(r, 800));
+      await ensureContentScript(tabId);
+    }
+  } catch (err) {
+    console.warn("[ZeroLLM Navigation] Gagal navigasi ke home area:", err.message);
+  }
+}
+
+/**
  * Memastikan content script siap merespon perintah
  */
 async function ensureContentScript(tabId) {
@@ -1216,6 +1271,9 @@ async function executeParallelTask(task) {
     await waitForTabComplete(targetTabId, 15000);
     await new Promise(r => setTimeout(r, 400));
 
+    // Navigasi ke Home Area jika tab sedang berada di percakapan lama
+    await navigateToHomeAreaIfNeeded(targetTabId, task.modelConfig);
+
     // 3. Sambungkan kembali content script jika perlu
     await ensureContentScript(targetTabId);
 
@@ -1314,6 +1372,9 @@ async function processGlobalQueue() {
     // Tunggu tab selesai dimuat sepenuhnya sebelum menyuntikkan prompt
     await waitForTabComplete(targetTabId, 15000);
     await new Promise(r => setTimeout(r, 600));
+
+    // Navigasi ke Home Area jika tab sedang berada di percakapan lama
+    await navigateToHomeAreaIfNeeded(targetTabId, task.modelConfig);
 
     // 3. Sambungkan kembali content script jika perlu
     await ensureContentScript(targetTabId);

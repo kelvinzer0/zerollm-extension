@@ -12,6 +12,7 @@ const modeDesc = document.getElementById("modeDesc");
 // Form elements
 const mId = document.getElementById("mId");
 const mUrl = document.getElementById("mUrl");
+const mNewChatUrl = document.getElementById("mNewChatUrl");
 const mNewChat = document.getElementById("mNewChat");
 const mStart = document.getElementById("mStart");
 const mContinue = document.getElementById("mContinue");
@@ -90,6 +91,7 @@ function renderModels(models) {
       const m = currentModels[idx];
       mId.value = m.id || "";
       mUrl.value = m.urlPattern || "";
+      if (mNewChatUrl) mNewChatUrl.value = m.newChatUrl || m.defaultUrl || "";
       mNewChat.value = m.newChatSelector || "";
       mStart.value = m.startChatSelector || "";
       mContinue.value = m.continueChatSelector || "";
@@ -178,6 +180,7 @@ function saveModelsToBackground(newModels) {
 saveModelBtn.addEventListener("click", () => {
   const modelId = mId.value.trim();
   const urlPattern = mUrl.value.trim();
+  const newChatUrl = mNewChatUrl ? mNewChatUrl.value.trim() : "";
   const newChatSel = mNewChat.value.trim();
   const startChat = mStart.value.trim();
   const continueChat = mContinue.value.trim();
@@ -196,6 +199,8 @@ saveModelBtn.addEventListener("click", () => {
     name: modelId,
     enabled: true,
     urlPattern,
+    defaultUrl: newChatUrl || (existingIndex >= 0 ? currentModels[existingIndex].defaultUrl : undefined),
+    newChatUrl: newChatUrl || (existingIndex >= 0 ? currentModels[existingIndex].newChatUrl : undefined),
     newChatSelector: newChatSel,
     startChatSelector: startChat,
     continueChatSelector: continueChat,
@@ -217,6 +222,7 @@ saveModelBtn.addEventListener("click", () => {
   // Clear inputs
   mId.value = "";
   mUrl.value = "";
+  if (mNewChatUrl) mNewChatUrl.value = "";
   mStart.value = "";
   mContinue.value = "";
   mStream.value = "";
