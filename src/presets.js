@@ -65,7 +65,7 @@ export const DEFAULT_PRESETS = [
     continueChatSelector: "div[contenteditable='true'], fieldset div[contenteditable='true'], [aria-label*='Write your prompt'], div.ProseMirror, textarea",
     streamSelector: "button[aria-label*='Stop response'], button[aria-label*='Stop'], button[aria-label*='Berhenti'], .stop-button, button[aria-label*='Stop generating'], [data-is-streaming='true']",
     doneSelector: "button[aria-label*='Send Message']:not([disabled]), button[aria-label*='Send']:not([disabled]), button[aria-label*='Kirim']:not([disabled]), button:has(svg path[d*='M2 12']):not([disabled])",
-    resultContainerSelector: "div[data-is-streaming='true'], div[data-testid='chat-message']:not([data-testid='user-message']), article:has(button[aria-label*='Salin'], button[aria-label*='Copy']), div.font-claude-message, [data-is-streaming='false']",
+    resultContainerSelector: "div.font-claude-message, [class*='font-claude'], div[data-message-author-role='assistant'], div[data-testid='chat-message']:not([data-testid='user-message']) .grid, div[data-testid='chat-message']:not([data-testid='user-message']), article:has(button[aria-label*='Salin'], button[aria-label*='Copy'])",
     description: "Anthropic Claude Web Interface (Claude 3.5 Sonnet & Haiku)"
   },
   {
@@ -91,8 +91,8 @@ export const DEFAULT_PRESETS = [
     urlPattern: "*://chat.deepseek.com/*",
     responseScope: "main, [class*='chat-message-list'], [class*='conversation'], [role='main'], [class*='chat-container'], [class*='chat'], #root",
     newChatSelector: "div[role='button']:has-text('New chat'), div[role='button']:has-text('开启新对话'), a[href='/'], div[class*='new-chat']",
-    startChatSelector: "textarea[placeholder*='DeepSeek'], textarea#chat-input, textarea, div[contenteditable='true'], [role='textbox']",
-    continueChatSelector: "textarea[placeholder*='DeepSeek'], textarea#chat-input, textarea, div[contenteditable='true'], [role='textbox']",
+    startChatSelector: "textarea#chat-input, textarea.ds-scroll-area, textarea[placeholder*='DeepSeek'], textarea[placeholder*='Pesan DeepSeek'], textarea[placeholder*='Send DeepSeek'], textarea",
+    continueChatSelector: "textarea#chat-input, textarea.ds-scroll-area, textarea[placeholder*='DeepSeek'], textarea[placeholder*='Pesan DeepSeek'], textarea[placeholder*='Send DeepSeek'], textarea",
     streamSelector: "button[aria-label*='Stop'], div[class*='stop'], .ds-icon-button:has(svg rect), [aria-label*='停止生成']",
     doneSelector: "div[role='button']:has(svg):not([aria-disabled='true']), button[aria-label*='Send']:not([disabled]), div[class*='send-button']:not([aria-disabled='true'])",
     resultContainerSelector: ".ds-markdown, .ds-markdown--block, [class*='message-content'], [data-role='assistant'], div.chat-message-bubble",

@@ -171,11 +171,11 @@ function isValidResponseElement(el) {
   const tag = el.tagName.toLowerCase();
   if (["textarea", "input", "form", "script", "style", "head", "button", "nav", "header", "footer"].includes(tag)) return false;
 
-  // Tolak jika elemen berada di dalam composer/input/editor/footer/sidebar
-  if (el.closest("form, #prompt-textarea, [contenteditable='true'], [role='textbox'], .composer, footer, header, nav, aside, [class*='sidebar'], [class*='footer'], [class*='disclaimer']")) return false;
+  // Tolak jika elemen berada di dalam composer/input/editor/footer/sidebar/history
+  if (el.closest("form, #prompt-textarea, [contenteditable='true'], [role='textbox'], .composer, footer, header, nav, aside, [class*='sidebar'], [class*='footer'], [class*='disclaimer'], [class*='history'], [class*='navigation'], [class*='menu']")) return false;
 
   // Tolak elemen footer/disclaimer berdasarkan selector
-  if (el.matches("footer, [class*='disclaimer'], [class*='footer'], [class*='bottom-bar'], [class*='legal'], [class*='copyright']")) return false;
+  if (el.matches("footer, [class*='disclaimer'], [class*='footer'], [class*='bottom-bar'], [class*='legal'], [class*='copyright'], [class*='history'], [class*='sidebar']")) return false;
 
   // Tolak jika merupakan pesan pengguna (user message)
   if (
@@ -187,12 +187,12 @@ function isValidResponseElement(el) {
   const text = (el.innerText || el.textContent || "").replace(/[\u200B-\u200D\uFEFF\s]/g, "");
   if (!text || text.length < 2) return false;
 
-  // Tolak teks kontrol UI yang pendek
-  if (/^(auto|tulis pesan…|tulis pesan|write your prompt|type a message|salin|copy|share|more actions)$/i.test(text)) return false;
+  // Tolak teks kontrol UI atau timestamp pendek
+  if (/^(auto|tulis pesan…|tulis pesan|write your prompt|type a message|salin|copy|share|more actions|sekarang|hari ini|kemarin|today|yesterday|just now|citation sources.*)$/i.test(text)) return false;
 
-  // Tolak teks disclaimer / notice / citation yang sering salah ditangkap sebagai respon
+  // Tolak teks disclaimer / notice / citation / quota limit yang sering salah ditangkap sebagai respon
   const lowerText = text.toLowerCase();
-  if (/(?:dapat membuat kesalahan|may not be accurate|for reference only|can make mistakes|ai-generated|one more step|verify important|consider checking|not always accurate|mimo-v2|bisa saja salah|harap verifikasi|periksa info penting|citation sources|chat.*cowork|chatgpt bilang)/i.test(lowerText)) return false;
+  if (/(?:dapat membuat kesalahan|may not be accurate|for reference only|can make mistakes|ai-generated|one more step|verify important|consider checking|not always accurate|mimo-v2|bisa saja salah|harap verifikasi|periksa info penting|citation sources|chat.*cowork|chatgpt bilang|file,\s*gambar|tidak tersedia hingga|lanjutkan chat hanya dengan teks|upgrade to plus|usage limit)/i.test(lowerText)) return false;
 
   return true;
 }
@@ -395,8 +395,12 @@ function cleanResultMarkdown(markdown) {
     .replace(/^(?:Berpikir|Menalar)\s+selama\s+[^\n]+\n+/gim, "")
     .replace(/^(?:Thought for\s+[^\n]+)\n+/gim, "")
     .replace(/^(?:Thinking completed|Thinking process|Finished thinking)\s*/gim, "")
+    // Hapus header timestamp ("sekarang", "hari ini")
+    .replace(/^(?:#+\s*)?(?:sekarang|just now|hari ini|kemarin|today|yesterday)\s*\n+/gim, "")
+    // Hapus footer disclaimer kuota / gambar ChatGPT ("File, Gambar, dan analisis data tidak tersedia...")
+    .replace(/(?:\n+|^)(?:File,\s*Gambar[^\n]*|Files?,\s*images?[^\n]*|analisis data tidak tersedia[^\n]*|Lanjutkan chat hanya dengan teks[^\n]*|Tingkatkan untuk akses lebih luas[^\n]*|Upgrade to Plus[^\n]*|Usage limit reached[^\n]*|penggunaan direset[^\n]*).*$/gim, "")
     // Hapus footer citation / source disclaimer ("Citation sources (0)")
-    .replace(/(?:\n|^)(?:Citation sources\s*\(\d+\)|Sources\s*\(\d+\)|Referensi\s*\(\d+\))[^\n]*$/gim, "")
+    .replace(/(?:\n+|^)(?:Citation sources\s*(?:\(\d+\))?|Sources\s*(?:\(\d+\))?|Referensi\s*(?:\(\d+\))?)[^\n]*$/gim, "")
     .replace(/\n{3,}/g, "\n\n");
   return cleaned.trim() || markdown.trim();
 }
