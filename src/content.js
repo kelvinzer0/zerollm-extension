@@ -338,7 +338,7 @@ function findAssistantResponseByDOMDiff(query, modelConfig) {
       if (isValidResponseElement(nextNode) && scope.contains(nextNode)) {
         return nextNode;
       }
-      const innerMessage = nextNode.querySelector("article, [class*='message'], .markdown, div");
+      const innerMessage = nextNode.querySelector(".markdown-prose, [class*='markdown-prose'], [class*='Markdown_markdown'], [class*='message-content'], article, [class*='message'], .markdown, div");
       if (innerMessage && isValidResponseElement(innerMessage) && scope.contains(innerMessage)) {
         return innerMessage;
       }
@@ -352,7 +352,7 @@ function findAssistantResponseByDOMDiff(query, modelConfig) {
         let sibling = parent.nextElementSibling;
         while (sibling) {
           if (isValidResponseElement(sibling) && scope.contains(sibling)) return sibling;
-          const inner = sibling.querySelector("article, [class*='message'], .markdown, div");
+          const inner = sibling.querySelector(".markdown-prose, [class*='markdown-prose'], [class*='Markdown_markdown'], [class*='message-content'], article, [class*='message'], .markdown, div");
           if (inner && isValidResponseElement(inner) && scope.contains(inner)) return inner;
           sibling = sibling.nextElementSibling;
         }
@@ -378,7 +378,7 @@ function checkIsDone(modelConfig) {
 function isThinkingOnly(text) {
   if (!text) return false;
   const cleaned = text.replace(/[\u200B-\u200D\uFEFF]/g, "").trim().toLowerCase();
-  return /^(thinking(\.{0,3}|…)?|thinking process(\.{0,3}|…)?|thinking completed|finished thinking|menalar(\.{0,3}|…)?|sedang berpikir(\.{0,3}|…)?|berhenti berpikir|stop thinking|berpikir(\.{0,3}|…)?|merenung(\.{0,3}|…)?|(?:berpikir|menalar|merenung)\s+selama\s+.*|thought\s+for\s+.*|已完成思考|思考过程)$/i.test(cleaned);
+  return /^(mimo-v[0-9.]+(?:-[a-z0-9]+)?|thinking(\.{0,3}|…)?|thinking process(\.{0,3}|…)?|thinking completed|finished thinking|menalar(\.{0,3}|…)?|sedang berpikir(\.{0,3}|…)?|berhenti berpikir|stop thinking|berpikir(\.{0,3}|…)?|merenung(\.{0,3}|…)?|(?:berpikir|menalar|merenung)\s+selama\s+.*|thought\s+for\s+.*|已完成思考|思考过程)$/i.test(cleaned);
 }
 
 function cleanResultMarkdown(markdown) {
@@ -407,7 +407,7 @@ function cleanResultMarkdown(markdown) {
     // Hapus footer citation / source disclaimer ("Citation sources (0)")
     .replace(/(?:\n+|^)(?:Citation sources\s*(?:\(\d+\))?|Sources\s*(?:\(\d+\))?|Referensi\s*(?:\(\d+\))?)[^\n]*$/gim, "")
     .replace(/\n{3,}/g, "\n\n");
-  return cleaned.trim() || markdown.trim();
+  return cleaned.trim();
 }
 
 /**
@@ -673,7 +673,7 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
       // 2. Tidak lagi dalam status streaming ATAU teks sudah stabil minimal 3 detik (stableCount >= 6 fail-safe)
       // 3. Teks stabil minimal 2 putaran polling (1 detik)
       const isDoneStreaming = !isStreaming || stableCount >= 6;
-      if (streamStarted && hasMeaningfulText && !thinkingOnly && isDoneStreaming && stableCount >= 2 && pollCount >= 2) {
+      if (streamStarted && hasMeaningfulText && !thinkingOnly && isDoneStreaming && stableCount >= 2 && pollCount >= 4) {
         clearInterval(interval);
         console.log(`[ZeroLLM Monitor] Response completed successfully (${meaningfulMarkdown.length} chars)`);
         resolve(cleanResultMarkdown(lastMarkdown));
