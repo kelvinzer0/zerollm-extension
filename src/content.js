@@ -192,7 +192,7 @@ function isValidResponseElement(el) {
 
   // Tolak teks disclaimer / notice / citation / quota limit yang sering salah ditangkap sebagai respon
   const lowerText = text.toLowerCase();
-  if (/(?:dapat membuat kesalahan|may not be accurate|for reference only|can make mistakes|ai-generated|one more step|verify important|consider checking|not always accurate|mimo-v2|bisa saja salah|harap verifikasi|periksa info penting|citation sources|chat.*cowork|chatgpt bilang|file,\s*gambar|tidak tersedia hingga|lanjutkan chat hanya dengan teks|upgrade to plus|usage limit)/i.test(lowerText)) return false;
+  if (/(?:dapat membuat kesalahan|may not be accurate|for reference only|can make mistakes|ai-generated|one more step|verify important|consider checking|not always accurate|bisa saja salah|harap verifikasi|periksa info penting|citation sources|chat.*cowork|chatgpt bilang|file,\s*gambar|tidak tersedia hingga|lanjutkan chat hanya dengan teks|upgrade to plus|usage limit)/i.test(lowerText)) return false;
 
   return true;
 }
@@ -395,6 +395,8 @@ function cleanResultMarkdown(markdown) {
     .replace(/^(?:Berpikir|Menalar|Merenung)\s+selama\s+[^\n]+\n+/gim, "")
     .replace(/^(?:Thought for\s+[^\n]+)\n+/gim, "")
     .replace(/^(?:Thinking completed|Thinking process|Finished thinking|Merenung)\s*/gim, "")
+    // Hapus label header model Xiaomi MiMo ("MiMo-V2.5-Pro", dll) jika ikut terambil
+    .replace(/^(?:#+\s*)?(?:MiMo-V[0-9.]+(?:-[a-zA-Z0-9]+)?)\s*\n*/gim, "")
     // Hapus header timestamp ("sekarang", "hari ini")
     .replace(/^(?:#+\s*)?(?:sekarang|just now|hari ini|kemarin|today|yesterday)\s*\n+/gim, "")
     // Hapus footer status generasi ("Generating", "Generating...", "Sedang membuat...", "Stop generating", dll)
@@ -422,13 +424,16 @@ function checkIsStreaming(modelConfig) {
     }
   }
 
-  // Deteksi ikon Stop khusus (seperti Xiaomi MiMo rounded square: M19 2H5a3 3 0 0 0-3 3v14)
-  const stopSvgPath = document.querySelector("svg path[d*='M19 2H5a3 3 0 0 0-3 3v14'], svg.size-3 path[d*='M19 2H5']");
-  if (stopSvgPath) {
-    const target = stopSvgPath.closest("button") || stopSvgPath;
-    if (target.offsetParent !== null || window.getComputedStyle(target).display !== "none") {
-      return true;
-    }
+  // Deteksi ikon Stop khusus Xiaomi MiMo (rounded square: M19 2H5a3 3 0 0 0-3 3v14 atau svg.size-3 pada tombol send/stop)
+  const stopSvg = document.querySelector("svg.size-3, svg path[d*='M19 2H5a3 3 0 0 0-3 3v14'], button[data-track-id='home_send_btn']:has(svg.size-3)");
+  if (stopSvg) {
+    return true;
+  }
+
+  // Deteksi skeleton loading / pulse placeholder (seperti pada Xiaomi MiMo saat berpikir)
+  const skeletonPulse = document.querySelector(".animate-pulse, [class*='animate-pulse']");
+  if (skeletonPulse && (skeletonPulse.offsetParent !== null || window.getComputedStyle(skeletonPulse).display !== "none")) {
+    return true;
   }
 
   const genericStream = document.querySelector(

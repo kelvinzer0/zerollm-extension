@@ -243,7 +243,7 @@ export const DEFAULT_PRESETS = [
     newChatSelector: "button[aria-label*='New conversation'], [aria-label*='新建对话'], button:has-text('新建对话'), button:has-text('New chat')",
     startChatSelector: "textarea[placeholder], textarea, [contenteditable='true']",
     continueChatSelector: "textarea[placeholder], textarea, [contenteditable='true']",
-    streamSelector: "button:has(svg path[d*='M19 2H5a3 3 0 0 0-3 3v14']), svg:has(path[d*='M19 2H5a3 3 0 0 0-3 3v14']), svg path[d*='M19 2H5a3 3 0 0 0-3 3v14'], button[class*='stop'], [aria-label*='Stop'], button[aria-label*='停止'], button[aria-label*='Berhenti']",
+    streamSelector: "button[data-track-id='home_send_btn']:has(svg.size-3), svg.size-3, .animate-pulse, [class*='animate-pulse'], button:has(svg path[d*='M19 2H5a3 3 0 0 0-3 3v14']), svg:has(path[d*='M19 2H5a3 3 0 0 0-3 3v14']), svg path[d*='M19 2H5a3 3 0 0 0-3 3v14'], button[class*='stop'], [aria-label*='Stop'], button[aria-label*='停止'], button[aria-label*='Berhenti']",
     doneSelector: "button:has(svg path[d*='M.244']), button:has(svg path[d*='18.202']), button[class*='send']:not([disabled]), button[type='submit']:not([disabled]), button[aria-label*='Send']:not([disabled])",
     resultContainerSelector: ".markdown-prose, [class*='markdown-prose'], [class*='Markdown_markdown'], div[class*='message-item']:not([class*='user']), div[class*='chat-item']:not([class*='user']), [class*='message-content'], .markdown",
     description: "Xiaomi MiMo AI Studio Web Interface (aistudio.xiaomimimo.com)"
