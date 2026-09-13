@@ -25,20 +25,20 @@ let pingInterval = null;
 // User defined & preset models
 let models = [];
 // Execution mode: "sequential" (single window queue) | "parallel" (dedicated multi-window parallel)
-let executionMode = "sequential";
+let executionMode = "parallel";
 
 // Active Model -> Tab ID mapping: Map<modelId, tabId>
 const modelTabMap = new Map();
-// Model -> Window ID mapping (digunakan saat parallel mode aktif): Map<modelId, windowId>
+// Model -> Window ID mapping: Map<modelId, windowId>
 const modelWindowMap = new Map();
+// Dedicated Worker Windows set: Set<windowId>
+const dedicatedWindows = new Set();
+// Active Tab Workers map (tracks currently busy tabs): Map<tabId, { requestId, modelId, startTime }>
+const activeTabWorkers = new Map();
 
 // Sequential Single-Window FIFO Queue
 const globalQueue = [];
 let isProcessingGlobalQueue = false;
-
-// Parallel Multi-Window Queues per Model: Map<modelId, Array<task>>
-const modelQueues = new Map();
-const isProcessingModel = new Map();
 
 // Map request aktif: Map<requestId, { resolve, reject, task, targetTabId, originalTabId }>
 const activeRequests = new Map();
@@ -148,41 +148,35 @@ function wildcardToRegExp(pattern) {
 }
 
 /**
- * Mencari tab yang cocok atau OTOMATIS MEMBUKA TAB/WINDOW BARU jika belum terbuka
+ * Mencari tab yang cocok atau OTOMATIS MEMBUKA TAB/WINDOW BARU jika belum terbuka atau sedang sibuk
  */
 async function getTabForModel(modelConfig) {
   const patternRegex = wildcardToRegExp(modelConfig.urlPattern);
 
   // ── MODE PARALEL (MULTI-WINDOW) ──────────────────────────────
   if (executionMode === "parallel") {
-    // 1. Cek window terdaftar untuk model ini
-    const winId = modelWindowMap.get(modelConfig.id);
-    if (winId) {
-      try {
-        const win = await chrome.windows.get(winId, { populate: true });
-        const tab = win.tabs?.find(t => t.url && patternRegex.test(t.url)) || win.tabs?.[0];
-        if (tab) {
-          modelTabMap.set(modelConfig.id, tab.id);
-          return tab;
-        }
-      } catch (e) {
-        modelWindowMap.delete(modelConfig.id);
-      }
-    }
-
-    // 2. Cek apakah ada window manapun yang memiliki tab yang cocok
+    // 1. Cari tab yang cocok dan TIDAK sedang sibuk (idle) di semua jendela Chrome
     const allWindows = await chrome.windows.getAll({ populate: true }).catch(() => []);
+    
     for (const w of allWindows) {
-      const match = w.tabs?.find(t => t.url && patternRegex.test(t.url));
-      if (match) {
-        modelWindowMap.set(modelConfig.id, w.id);
-        modelTabMap.set(modelConfig.id, match.id);
-        return match;
+      if (w.tabs) {
+        for (const tab of w.tabs) {
+          if (tab.url && patternRegex.test(tab.url)) {
+            // Jika tab ini TIDAK sedang sibuk memproses request lain -> PAKAI!
+            if (!activeTabWorkers.has(tab.id)) {
+              dedicatedWindows.add(w.id);
+              modelTabMap.set(modelConfig.id, tab.id);
+              modelWindowMap.set(modelConfig.id, w.id);
+              return tab;
+            }
+          }
+        }
       }
     }
 
-    // 3. Jika belum ada: Buka Jendela Baru Khusus (Dedicated Window) untuk model ini!
-    console.log(`[ZeroLLM Parallel] Opening dedicated window for model ${modelConfig.id}...`);
+    // 2. Jika semua tab yang ada sedang sibuk (atau belum ada sama sekali):
+    //    Buka Dedicated Active Worker Window BARU secara otomatis untuk eksekusi paralel serentak!
+    console.log(`[ZeroLLM Parallel] Spawning dedicated worker window for model '${modelConfig.id}'...`);
     let targetUrl = modelConfig.defaultUrl;
     if (!targetUrl) {
       targetUrl = modelConfig.urlPattern.replace(/^\*:\/\//, "https://").replace(/\*+/g, "");
@@ -196,10 +190,14 @@ async function getTabForModel(modelConfig) {
       type: "normal",
       width: 960,
       height: 720,
-      focused: false
+      focused: true
     });
+
     const createdTab = newWin.tabs?.[0];
-    if (newWin.id) modelWindowMap.set(modelConfig.id, newWin.id);
+    if (newWin.id) {
+      dedicatedWindows.add(newWin.id);
+      modelWindowMap.set(modelConfig.id, newWin.id);
+    }
     if (createdTab) modelTabMap.set(modelConfig.id, createdTab.id);
 
     // Tunggu tab selesai dimuat (max 10 detik)
@@ -829,12 +827,8 @@ async function handleBridgeMessage(msg) {
     };
 
     if (executionMode === "parallel") {
-      // MODE PARALEL (MULTI-WINDOW): Setiap model berjalan serentak di jendela khususnya masing-masing!
-      if (!modelQueues.has(modelId)) {
-        modelQueues.set(modelId, []);
-      }
-      modelQueues.get(modelId).push(taskItem);
-      processParallelModelQueue(modelId);
+      // TRUE MULTI-WINDOW PARALLEL: Eksekusi serentak langsung tanpa terkunci antrean per-model!
+      executeParallelTask(taskItem);
     } else {
       // MODE SEQUENTIAL (SINGLE-WINDOW): Antrean tertib bergantian, 1 tab aktif terkunci sampai selesai
       globalQueue.push(taskItem);
@@ -844,32 +838,33 @@ async function handleBridgeMessage(msg) {
 }
 
 /**
- * Pemrosesan antrean per-model untuk Mode Paralel Multi-Window
- * ChatGPT dan ChatSmith dapat merespon serentak secara bersamaan tanpa saling menunggu!
+ * TRUE MULTI-WINDOW PARALLEL DISPATCHER
+ * Setiap request dialokasikan ke dedicated tab/window aktif dan berjalan serentak 100%
  */
-async function processParallelModelQueue(modelId) {
-  if (isProcessingModel.get(modelId)) return;
-  const queue = modelQueues.get(modelId);
-  if (!queue || queue.length === 0) return;
-
-  isProcessingModel.set(modelId, true);
-  const task = queue.shift();
+async function executeParallelTask(task) {
   let targetTabId = null;
 
   try {
     // 1. Dapatkan tab pada dedicated window untuk model ini
     const tab = await getTabForModel(task.modelConfig);
-    if (!tab) {
+    if (!tab || !tab.id) {
       throw new Error(`Could not find or open dedicated window/tab for model '${task.modelConfig.id}'`);
     }
     targetTabId = tab.id;
+
+    // Tandai tab ini sedang aktif memproses requestId ini
+    activeTabWorkers.set(targetTabId, {
+      requestId: task.requestId,
+      modelId: task.modelConfig.id,
+      startTime: Date.now()
+    });
 
     // 2. Pastikan tab aktif di window miliknya
     await chrome.tabs.update(targetTabId, { active: true }).catch(() => {});
 
     // Tunggu tab selesai dimuat sepenuhnya sebelum menyuntikkan prompt
     await waitForTabComplete(targetTabId, 15000);
-    await new Promise(r => setTimeout(r, 600));
+    await new Promise(r => setTimeout(r, 400));
 
     // 3. Sambungkan kembali content script jika perlu
     await ensureContentScript(targetTabId);
@@ -924,7 +919,7 @@ async function processParallelModelQueue(modelId) {
     });
 
   } catch (err) {
-    console.error(`[ZeroLLM Parallel] Error processing model ${modelId}:`, err);
+    console.error(`[ZeroLLM Parallel] Error processing task ${task.requestId} for model ${task.modelConfig.id}:`, err);
     sendToBridge({
       type: "streamError",
       requestId: task.requestId,
@@ -932,11 +927,8 @@ async function processParallelModelQueue(modelId) {
     });
   } finally {
     activeRequests.delete(task.requestId);
-    isProcessingModel.set(modelId, false);
-
-    // Lanjutkan memproses antrean berikutnya untuk model ini jika ada
-    if (queue && queue.length > 0) {
-      processParallelModelQueue(modelId);
+    if (targetTabId) {
+      activeTabWorkers.delete(targetTabId);
     }
   }
 }
@@ -1156,6 +1148,21 @@ function broadcastState() {
     }
   }).catch(() => {});
 }
+
+// Clean up closed tabs and dedicated windows
+chrome.tabs.onRemoved.addListener((tabId) => {
+  activeTabWorkers.delete(tabId);
+  for (const [modelId, tid] of modelTabMap.entries()) {
+    if (tid === tabId) modelTabMap.delete(modelId);
+  }
+});
+
+chrome.windows.onRemoved.addListener((windowId) => {
+  dedicatedWindows.delete(windowId);
+  for (const [modelId, wid] of modelWindowMap.entries()) {
+    if (wid === windowId) modelWindowMap.delete(modelId);
+  }
+});
 
 // Auto-start on load & Auto-attach tabs
 loadModels().then(async () => {
