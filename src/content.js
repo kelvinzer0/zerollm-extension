@@ -414,10 +414,23 @@ function cleanResultMarkdown(markdown) {
 function checkIsStreaming(modelConfig) {
   if (modelConfig?.streamSelector) {
     const el = findElementByPattern(modelConfig.streamSelector);
-    if (el && (el.offsetParent !== null || window.getComputedStyle(el).display !== "none")) {
+    if (el) {
+      const target = el.closest("button") || el;
+      if (target.offsetParent !== null || window.getComputedStyle(target).display !== "none") {
+        return true;
+      }
+    }
+  }
+
+  // Deteksi ikon Stop khusus (seperti Xiaomi MiMo rounded square: M19 2H5a3 3 0 0 0-3 3v14)
+  const stopSvgPath = document.querySelector("svg path[d*='M19 2H5a3 3 0 0 0-3 3v14'], svg.size-3 path[d*='M19 2H5']");
+  if (stopSvgPath) {
+    const target = stopSvgPath.closest("button") || stopSvgPath;
+    if (target.offsetParent !== null || window.getComputedStyle(target).display !== "none") {
       return true;
     }
   }
+
   const genericStream = document.querySelector(
     ".streaming, [data-is-streaming='true'], .typing-indicator, [class*='streaming'], [class*='typing'], " +
     "button[aria-label*='Stop' i], button[aria-label*='Berhenti' i], button[aria-label*='停止']"
