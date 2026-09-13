@@ -517,6 +517,84 @@ function syncModelsToBridge() {
 // ============================================================
 
 /**
+ * Normalisasi dan reparasi argumen JSON yang dihasilkan LLM.
+ * LLM seringkali menghasilkan JSON yang tidak valid pada baris perintah shell:
+ * - Literal newline (\r atau \n) di dalam string URL/perintah
+ * - Unescaped double quotes di dalam flag perintah (-H "Content-Type: ...")
+ * - Single quotes bukan double quotes
+ * - Trailing commas
+ */
+function safeParseJsonArgs(argsStr, fnName) {
+  if (!argsStr || typeof argsStr !== "string") return "{}";
+  argsStr = argsStr.trim();
+
+  // 1. Coba parse langsung jika sudah valid JSON
+  try {
+    const parsed = JSON.parse(argsStr);
+    if (typeof parsed === "object" && parsed !== null) {
+      return JSON.stringify(parsed);
+    }
+  } catch(e) {}
+
+  // 2. Normalisasi kutip satu (single quote) menjadi kutip dua jika mirip objek Python / JS
+  try {
+    const doubleQuoted = argsStr.replace(/'/g, '"');
+    const parsed = JSON.parse(doubleQuoted);
+    if (typeof parsed === "object" && parsed !== null) {
+      return JSON.stringify(parsed);
+    }
+  } catch(e) {}
+
+  // 3. Tangani objek JSON yang berisi baris perintah dengan unescaped quotes dan raw newlines
+  if (argsStr.startsWith("{") && argsStr.endsWith("}")) {
+    try {
+      // Hapus trailing comma
+      const noTrailing = argsStr.replace(/,\s*([\}\]])/g, "$1");
+      return JSON.stringify(JSON.parse(noTrailing));
+    } catch(e) {}
+
+    // Ekstraksi heuristik properti:
+    // Contoh: {"command":"curl ... -H "Content-Type: application/json" ...","timeoutSeconds":15}
+    const result = {};
+    let working = argsStr.slice(1, -1).trim();
+
+    // Ambil properti trailing (misal: "timeoutSeconds": 15, "background": true, dsb)
+    const trailingPropRegex = /,\s*"([a-zA-Z0-9_]+)"\s*:\s*([0-9.]+|true|false|null|"[^"]*")\s*$/;
+    let propMatch;
+    while ((propMatch = trailingPropRegex.exec(working)) !== null) {
+      const k = propMatch[1];
+      let v = propMatch[2];
+      try { v = JSON.parse(v); } catch(e) {}
+      result[k] = v;
+      working = working.slice(0, propMatch.index).trim();
+    }
+
+    // Properti pertama (biasanya "command", "input", "query", dsb)
+    const firstPropMatch = working.match(/^"([a-zA-Z0-9_]+)"\s*:\s*"?([\s\S]*)/);
+    if (firstPropMatch) {
+      const k = firstPropMatch[1];
+      let v = firstPropMatch[2];
+      if (v.endsWith('"')) v = v.slice(0, -1);
+      // Ganti raw newlines menjadi spasi tunggal agar valid JSON dan tidak merusak shell syntax
+      v = v.replace(/[\r\n]+/g, " ").trim();
+      result[k] = v;
+      return JSON.stringify(result);
+    }
+  }
+
+  // 4. Jika bukan objek JSON sama sekali tapi teks perintah mentah
+  if (!argsStr.startsWith("{")) {
+    const defaultKey = (fnName === "exec" || fnName === "bash") ? "command"
+                     : (fnName === "read" || fnName === "edit" || fnName === "write") ? "path"
+                     : "input";
+    return JSON.stringify({ [defaultKey]: argsStr.replace(/[\r\n]+/g, " ").trim() });
+  }
+
+  // 5. Fallback terakhir: bungkus raw text sebagai input JSON valid
+  return JSON.stringify({ input: argsStr.replace(/[\r\n]+/g, " ").trim() });
+}
+
+/**
  * Ekstraksi pemanggilan tool standar OpenAI dari balasan model.
  * Mendukung format pelapis (layered): <action name="...">...</action>, [ACTION: ...], dan blok JSON.
  */
@@ -530,13 +608,7 @@ function parseToolCalls(text) {
   let match;
   while ((match = tagRegex.exec(text)) !== null) {
     const fnName = match[1];
-    let argsStr = match[2].trim();
-    try {
-      const parsed = JSON.parse(argsStr);
-      argsStr = JSON.stringify(parsed);
-    } catch(e) {
-      if (!argsStr.startsWith("{")) argsStr = JSON.stringify({ input: argsStr });
-    }
+    const argsStr = safeParseJsonArgs(match[2], fnName);
     calls.push({
       id: "call_" + Math.random().toString(36).substring(2, 10),
       type: "function",
@@ -657,13 +729,7 @@ function parseToolCalls(text) {
     const bracketRegex = /\[(?:ACTION|PANGGIL_FUNGSI|TOOL|CALL):\s*([\w_-]+)\(([\s\S]*?)\)\]/gi;
     while ((match = bracketRegex.exec(text)) !== null) {
       const fnName = match[1];
-      let argsStr = match[2].trim();
-      try {
-        const parsed = JSON.parse(argsStr);
-        argsStr = JSON.stringify(parsed);
-      } catch(e) {
-        argsStr = JSON.stringify({ param: argsStr });
-      }
+      const argsStr = safeParseJsonArgs(match[2], fnName);
       calls.push({
         id: "call_" + Math.random().toString(36).substring(2, 10),
         type: "function",
@@ -1306,11 +1372,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const cleanContent = stripZeroLlmTags(msg.content);
       const toolCalls = parseToolCalls(msg.content);
       if (toolCalls && toolCalls.length > 0) {
+        // Ekstrak teks pengantar/penjelasan asisten yang ada di luar tag tool call
+        const textWithoutToolCalls = cleanContent
+          .replace(/<(?:zerollm_tool_call|zerollm_call|zerollm:call|action|call)[^>]*?>[\s\S]*?<\/(?:zerollm_tool_call|zerollm_call|zerollm:call|action|call)>/gi, "")
+          .replace(/<tool_call[^>]*?>[\s\S]*?<\/tool_call>/gi, "")
+          .replace(/\[(?:ACTION|PANGGIL_FUNGSI|TOOL|CALL):[\s\S]*?\]/gi, "")
+          .replace(/<(?:function|invoke)[^>]*?>[\s\S]*?<\/(?:function|invoke)>/gi, "")
+          .trim();
+
         console.log(`[ZeroLLM ToolCalls] Detected ${toolCalls.length} tool calls in response:`, toolCalls);
         sendToBridge({
           type: "response",
           requestId: msg.requestId,
-          content: null,
+          content: textWithoutToolCalls || null,
           tool_calls: toolCalls,
           finish_reason: "tool_calls",
           usage: msg.usage
@@ -1328,8 +1402,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // Simpan ke in-memory cache jika query tersedia
       const active = activeRequests.get(msg.requestId);
       if (active && active.task) {
+        const textWithoutToolCalls = (toolCalls && toolCalls.length > 0)
+          ? cleanContent
+              .replace(/<(?:zerollm_tool_call|zerollm_call|zerollm:call|action|call)[^>]*?>[\s\S]*?<\/(?:zerollm_tool_call|zerollm_call|zerollm:call|action|call)>/gi, "")
+              .replace(/<tool_call[^>]*?>[\s\S]*?<\/tool_call>/gi, "")
+              .replace(/\[(?:ACTION|PANGGIL_FUNGSI|TOOL|CALL):[\s\S]*?\]/gi, "")
+              .replace(/<(?:function|invoke)[^>]*?>[\s\S]*?<\/(?:function|invoke)>/gi, "")
+              .trim()
+          : null;
+
         saveToCache(active.task.modelConfig.id, active.task.query, {
-          content: toolCalls && toolCalls.length > 0 ? null : cleanContent,
+          content: toolCalls && toolCalls.length > 0 ? (textWithoutToolCalls || null) : cleanContent,
           tool_calls: toolCalls,
           finish_reason: toolCalls && toolCalls.length > 0 ? "tool_calls" : "stop",
           usage: msg.usage
