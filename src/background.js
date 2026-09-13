@@ -35,6 +35,49 @@ const modelWindowMap = new Map();
 const dedicatedWindows = new Set();
 // Active Tab Workers map (tracks currently busy tabs): Map<tabId, { requestId, modelId, startTime }>
 const activeTabWorkers = new Map();
+// Atomic Reserved Tab IDs: Set<tabId> (locked synchronously to prevent race conditions)
+const reservedTabs = new Set();
+// Concurrency limit per model in worker pool
+const MAX_CONCURRENT_WORKERS_PER_MODEL = 3;
+// Pending tasks waiting for an available worker in parallel mode
+const pendingParallelTasks = [];
+
+// ============================================================
+//  IN-MEMORY RESPONSE CACHE (INSTANT 10ms RESPONSES)
+// ============================================================
+const responseCache = new Map();
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 menit TTL
+
+function getCacheKey(modelId, query) {
+  return `${modelId}:::${(query || "").trim()}`;
+}
+
+function getFromCache(modelId, query) {
+  const key = getCacheKey(modelId, query);
+  const cached = responseCache.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.timestamp > CACHE_TTL_MS) {
+    responseCache.delete(key);
+    return null;
+  }
+  return cached;
+}
+
+function saveToCache(modelId, query, result) {
+  if (!query || !result) return;
+  const key = getCacheKey(modelId, query);
+  responseCache.set(key, {
+    content: result.content,
+    tool_calls: result.tool_calls,
+    finish_reason: result.finish_reason || "stop",
+    usage: result.usage,
+    timestamp: Date.now()
+  });
+  if (responseCache.size > 200) {
+    const firstKey = responseCache.keys().next().value;
+    responseCache.delete(firstKey);
+  }
+}
 
 // Sequential Single-Window FIFO Queue
 const globalQueue = [];
@@ -148,35 +191,41 @@ function wildcardToRegExp(pattern) {
 }
 
 /**
- * Mencari tab yang cocok atau OTOMATIS MEMBUKA TAB/WINDOW BARU jika belum terbuka atau sedang sibuk
+ * ATOMIC PRE-WARMED WORKER POOL ACQUISITION
+ * Mencari tab idle dan LANGSUNG mengunci (lock) secara sinkron sebelum proses async apapun.
  */
-async function getTabForModel(modelConfig) {
+async function acquireWorkerTab(modelConfig) {
   const patternRegex = wildcardToRegExp(modelConfig.urlPattern);
 
-  // ── MODE PARALEL (MULTI-WINDOW) ──────────────────────────────
-  if (executionMode === "parallel") {
-    // 1. Cari tab yang cocok dan TIDAK sedang sibuk (idle) di semua jendela Chrome
-    const allWindows = await chrome.windows.getAll({ populate: true }).catch(() => []);
-    
-    for (const w of allWindows) {
-      if (w.tabs) {
-        for (const tab of w.tabs) {
-          if (tab.url && patternRegex.test(tab.url)) {
-            // Jika tab ini TIDAK sedang sibuk memproses request lain -> PAKAI!
-            if (!activeTabWorkers.has(tab.id)) {
-              dedicatedWindows.add(w.id);
-              modelTabMap.set(modelConfig.id, tab.id);
-              modelWindowMap.set(modelConfig.id, w.id);
-              return tab;
-            }
+  // 1. Cari tab yang cocok dan saat ini IDLE di semua jendela Chrome
+  const allWindows = await chrome.windows.getAll({ populate: true }).catch(() => []);
+  
+  for (const w of allWindows) {
+    if (w.tabs) {
+      for (const tab of w.tabs) {
+        if (tab.url && patternRegex.test(tab.url)) {
+          // ATOMIC SYNCHRONOUS LOCK: Cek reservedTabs dan activeTabWorkers
+          if (!reservedTabs.has(tab.id) && !activeTabWorkers.has(tab.id)) {
+            reservedTabs.add(tab.id); // Langsung kunci secara atomik!
+            dedicatedWindows.add(w.id);
+            modelTabMap.set(modelConfig.id, tab.id);
+            modelWindowMap.set(modelConfig.id, w.id);
+            return tab;
           }
         }
       }
     }
+  }
 
-    // 2. Jika semua tab yang ada sedang sibuk (atau belum ada sama sekali):
-    //    Buka Dedicated Active Worker Window BARU secara otomatis untuk eksekusi paralel serentak!
-    console.log(`[ZeroLLM Parallel] Spawning dedicated worker window for model '${modelConfig.id}'...`);
+  // 2. Hitung jumlah worker aktif untuk model ini
+  let currentModelWorkers = 0;
+  for (const [tabId, info] of activeTabWorkers.entries()) {
+    if (info.modelId === modelConfig.id) currentModelWorkers++;
+  }
+
+  // 3. Jika belum mencapai batas max worker per model: Buat Dedicated Worker Window Baru
+  if (currentModelWorkers < MAX_CONCURRENT_WORKERS_PER_MODEL) {
+    console.log(`[ZeroLLM Pool] Spawning Pre-warmed Worker #${currentModelWorkers + 1} for '${modelConfig.id}'...`);
     let targetUrl = modelConfig.defaultUrl;
     if (!targetUrl) {
       targetUrl = modelConfig.urlPattern.replace(/^\*:\/\//, "https://").replace(/\*+/g, "");
@@ -194,25 +243,57 @@ async function getTabForModel(modelConfig) {
     });
 
     const createdTab = newWin.tabs?.[0];
-    if (newWin.id) {
-      dedicatedWindows.add(newWin.id);
-      modelWindowMap.set(modelConfig.id, newWin.id);
+    if (createdTab) {
+      reservedTabs.add(createdTab.id); // Langsung kunci secara atomik!
+      if (newWin.id) {
+        dedicatedWindows.add(newWin.id);
+        modelWindowMap.set(modelConfig.id, newWin.id);
+      }
+      modelTabMap.set(modelConfig.id, createdTab.id);
+
+      await new Promise(resolve => {
+        const listener = (tabId, info) => {
+          if (tabId === createdTab.id && info.status === "complete") {
+            chrome.tabs.onUpdated.removeListener(listener);
+            resolve();
+          }
+        };
+        chrome.tabs.onUpdated.addListener(listener);
+        setTimeout(resolve, 10000);
+      });
+
+      return createdTab;
     }
-    if (createdTab) modelTabMap.set(modelConfig.id, createdTab.id);
+  }
 
-    // Tunggu tab selesai dimuat (max 10 detik)
-    await new Promise(resolve => {
-      const listener = (tabId, info) => {
-        if (createdTab && tabId === createdTab.id && info.status === "complete") {
-          chrome.tabs.onUpdated.removeListener(listener);
-          resolve();
-        }
-      };
-      chrome.tabs.onUpdated.addListener(listener);
-      setTimeout(resolve, 10000);
-    });
+  return null;
+}
 
-    return createdTab;
+function releaseWorkerTab(tabId) {
+  if (tabId) {
+    reservedTabs.delete(tabId);
+    activeTabWorkers.delete(tabId);
+  }
+  dispatchNextPendingParallelTask();
+}
+
+function dispatchNextPendingParallelTask() {
+  if (pendingParallelTasks.length === 0) return;
+  const nextTask = pendingParallelTasks.shift();
+  if (nextTask) {
+    executeParallelTask(nextTask);
+  }
+}
+
+/**
+ * Mencari tab yang cocok atau OTOMATIS MEMBUKA TAB/WINDOW BARU jika belum terbuka
+ */
+async function getTabForModel(modelConfig) {
+  const patternRegex = wildcardToRegExp(modelConfig.urlPattern);
+
+  // ── MODE PARALEL (MULTI-WINDOW) ──────────────────────────────
+  if (executionMode === "parallel") {
+    return acquireWorkerTab(modelConfig);
   }
 
   // ── MODE SEQUENTIAL (SINGLE-WINDOW) ──────────────────────────
@@ -815,8 +896,26 @@ async function handleBridgeMessage(msg) {
       query = formatMessagesToPrompt(req.messages, req.tools);
     } else if (typeof req.prompt === "string") {
       query = req.prompt;
-    } else if (typeof req.input === "string") {
-      query = req.input;
+    // ── CEK IN-MEMORY CACHE (INSTANT 10ms RESPONSE) ──
+    const cached = getFromCache(modelId, query);
+    if (cached) {
+      console.log(`[ZeroLLM Cache] ⚡ Cache HIT for model '${modelId}' (0ms frontend latency)`);
+      if (req.stream !== false && cached.content) {
+        sendToBridge({
+          type: "stream",
+          requestId: msg.requestId,
+          delta: { content: cached.content }
+        });
+      }
+      sendToBridge({
+        type: "response",
+        requestId: msg.requestId,
+        content: cached.content,
+        tool_calls: cached.tool_calls,
+        finish_reason: cached.finish_reason || "stop",
+        usage: cached.usage
+      });
+      return;
     }
 
     const taskItem = {
@@ -827,7 +926,7 @@ async function handleBridgeMessage(msg) {
     };
 
     if (executionMode === "parallel") {
-      // TRUE MULTI-WINDOW PARALLEL: Eksekusi serentak langsung tanpa terkunci antrean per-model!
+      // TRUE MULTI-WINDOW PARALLEL: Eksekusi serentak via Atomic Pre-warmed Worker Pool!
       executeParallelTask(taskItem);
     } else {
       // MODE SEQUENTIAL (SINGLE-WINDOW): Antrean tertib bergantian, 1 tab aktif terkunci sampai selesai
@@ -845,10 +944,12 @@ async function executeParallelTask(task) {
   let targetTabId = null;
 
   try {
-    // 1. Dapatkan tab pada dedicated window untuk model ini
-    const tab = await getTabForModel(task.modelConfig);
+    // 1. Dapatkan tab pada dedicated window untuk model ini secara atomik
+    const tab = await acquireWorkerTab(task.modelConfig);
     if (!tab || !tab.id) {
-      throw new Error(`Could not find or open dedicated window/tab for model '${task.modelConfig.id}'`);
+      // Jika semua max concurrent workers sedang sibuk, antrekan ke pending queue
+      pendingParallelTasks.push(task);
+      return;
     }
     targetTabId = tab.id;
 
@@ -928,7 +1029,7 @@ async function executeParallelTask(task) {
   } finally {
     activeRequests.delete(task.requestId);
     if (targetTabId) {
-      activeTabWorkers.delete(targetTabId);
+      releaseWorkerTab(targetTabId);
     }
   }
 }
@@ -1082,8 +1183,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         });
       }
 
-      // Beritahu queue processor bahwa generasi telah selesai tuntas
+      // Simpan ke in-memory cache jika query tersedia
       const active = activeRequests.get(msg.requestId);
+      if (active && active.task) {
+        saveToCache(active.task.modelConfig.id, active.task.query, {
+          content: toolCalls && toolCalls.length > 0 ? null : msg.content,
+          tool_calls: toolCalls,
+          finish_reason: toolCalls && toolCalls.length > 0 ? "tool_calls" : "stop",
+          usage: msg.usage
+        });
+      }
+
+      // Beritahu queue processor bahwa generasi telah selesai tuntas
       if (active) {
         active.resolve(msg);
       }
