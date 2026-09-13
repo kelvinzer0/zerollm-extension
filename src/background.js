@@ -863,7 +863,8 @@ function formatMessagesToPrompt(messages, tools = []) {
     toolDirective += "Anda WAJIB memanggil fungsinya dengan format tag resmi berikut tanpa teks pembuka/penutup lainnya:\n";
     toolDirective += '<zerollm_tool_call name="nama_fungsi">{"parameter": "nilai"}</zerollm_tool_call>\n';
     toolDirective += "Contoh:\n";
-    toolDirective += '<zerollm_tool_call name="get_current_weather">{"location": "Jakarta"}</zerollm_tool_call>';
+    toolDirective += '<zerollm_tool_call name="get_current_weather">{"location": "Jakarta"}</zerollm_tool_call>\n';
+    toolDirective += "Sistem mendukung pemanggilan tool secara bertahap (multi-step chaining). Anda bebas memanggil tool berikutnya secara berantai jika informasi belum lengkap.";
 
     systemParts.push(toolDirective);
   }
@@ -882,12 +883,16 @@ function formatMessagesToPrompt(messages, tools = []) {
     endGuidance += '   <zerollm_tool_call name="nama_fungsi">{"parameter": "nilai"}</zerollm_tool_call>\n';
   }
   if (hasToolResultInHistory) {
-    endGuidance += "2. Tahap 2 (Hasil Tool): Di dalam riwayat terdapat tag <zerollm_tool_result>. Jawablah pertanyaan awal pengguna berdasarkan data hasil tool tersebut secara langsung dan alami tanpa tag apapun.\n";
+    endGuidance += "2. Tahap 2 (Evaluasi Hasil Tool & Multi-Step Execution):\n";
+    endGuidance += "   - Evaluasi secara kritis apakah data di dalam <zerollm_tool_result> sudah cukup, valid, dan menjawab tuntas permintaan pengguna.\n";
+    endGuidance += "   - JIKA data masih kurang lengkap, kosong, error, atau membutuhkan investigasi lanjutan (misal: membaca file lain, mencoba perintah alternatif, atau mencari informasi tambahan): Anda WAJIB MEMANGGIL TOOL BERIKUTNYA dengan tag:\n";
+    endGuidance += '     <zerollm_tool_call name="nama_fungsi">{"parameter": "nilai"}</zerollm_tool_call>\n';
+    endGuidance += "   - JIKA seluruh data sudah lengkap dan memuaskan: Berikan jawaban akhir secara mendalam, langsung, dan alami kepada pengguna tanpa tag tool apapun.\n";
   }
   if (!hasTools && !hasToolResultInHistory) {
     endGuidance += "Jawablah permintaan pengguna di dalam <zerollm_user> terakhir secara langsung dan alami tanpa menyertakan tag <zerollm_*> apapun.";
   } else {
-    endGuidance += "3. Jika pertanyaan pengguna TIDAK membutuhkan tool, jawablah langsung secara alami tanpa tag <zerollm_*> apapun.";
+    endGuidance += "3. Jika pertanyaan pengguna TIDAK membutuhkan tool sama sekali, jawablah langsung secara alami tanpa tag <zerollm_*> apapun.";
   }
 
   // Jika tidak ada percakapan non-sistem, kirim instruksi sistem saja
@@ -935,7 +940,7 @@ function formatMessagesToPrompt(messages, tools = []) {
   const lastText = stripInboundMeta(extractTextContent(lastMsg.content));
   if (lastMsg.role === "tool" || lastMsg.role === "toolResult") {
     const toolId = lastMsg.name || lastMsg.tool_call_id || "eksternal";
-    promptBuilder += `<zerollm_tool_result name="${toolId}">\n${lastText}\n</zerollm_tool_result>\n\nJawablah permintaan awal pengguna berdasarkan hasil tool di atas.`;
+    promptBuilder += `<zerollm_tool_result name="${toolId}">\n${lastText}\n</zerollm_tool_result>\n\nEvaluasi hasil tool di atas: jika informasi sudah lengkap dan memuaskan, berikan jawaban akhir yang tuntas; jika belum memuaskan atau butuh langkah investigasi lanjutan, panggil tool berikutnya yang relevan menggunakan <zerollm_tool_call>.`;
   } else {
     promptBuilder += `<zerollm_user>\n${lastText}\n</zerollm_user>`;
   }
