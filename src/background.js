@@ -667,16 +667,48 @@ function parseToolCalls(text) {
 }
 
 /**
+ * Ekstraksi teks dari pesan content yang bisa berupa string murni,
+ * array of string, array of parts [{ type: 'text', text: '...' }], atau multimodal.
+ */
+function extractTextContent(content) {
+  if (content === null || content === undefined) return "";
+  if (typeof content === "string") return content.trim();
+  if (Array.isArray(content)) {
+    return content
+      .map(part => {
+        if (!part) return "";
+        if (typeof part === "string") return part;
+        if (typeof part === "object") {
+          if (typeof part.text === "string") return part.text;
+          if (typeof part.content === "string") return part.content;
+          if (part.type === "image_url" || part.type === "image") return "[Gambar]";
+          if (part.type === "video_url" || part.type === "video") return "[Video]";
+        }
+        return String(part);
+      })
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+  }
+  if (typeof content === "object") {
+    if (typeof content.text === "string") return content.text.trim();
+    if (typeof content.content === "string") return content.content.trim();
+  }
+  return String(content).trim();
+}
+
+/**
  * Format messages dan tools dari format standar OpenAI Chat Completions
  * menjadi satu kesatuan prompt utuh yang dipahami dan dipatuhi oleh Web AI chatbot.
  */
 function formatMessagesToPrompt(messages, tools = []) {
   if (!Array.isArray(messages) || messages.length === 0) return "";
 
-  // 1. Kumpulkan instruksi sistem
+  // 1. Kumpulkan instruksi sistem (termasuk role 'developer' yang dikirim AI SDK / OpenClaw)
   const systemParts = messages
-    .filter(m => m.role === "system" && m.content)
-    .map(m => m.content.trim());
+    .filter(m => (m.role === "system" || m.role === "developer") && m.content)
+    .map(m => extractTextContent(m.content))
+    .filter(Boolean);
 
   // 2. Jika ada tools eksternal terdaftar, lapisi dengan instruksi ketat
   if (Array.isArray(tools) && tools.length > 0) {
@@ -704,7 +736,7 @@ function formatMessagesToPrompt(messages, tools = []) {
   const systemInstruction = systemParts.join("\n\n");
 
   // 3. Kumpulkan percakapan non-sistem
-  const convo = messages.filter(m => m.role !== "system");
+  const convo = messages.filter(m => m.role !== "system" && m.role !== "developer");
 
   // Jika tidak ada percakapan non-sistem, kirim instruksi sistem saja
   if (convo.length === 0) {
@@ -713,14 +745,14 @@ function formatMessagesToPrompt(messages, tools = []) {
 
   // Kasus umum: 1 pesan user (dengan atau tanpa system prompt / tools)
   if (convo.length === 1 && convo[0].role === "user") {
-    const userPrompt = (convo[0].content || "").trim();
+    const userPrompt = extractTextContent(convo[0].content);
     if (systemInstruction) {
       return `(Petunjuk / System Directive: ${systemInstruction})\n\n${userPrompt}`;
     }
     return userPrompt;
   }
 
-  // Kasus multi-turn conversation (bisa mencakup role: "tool" hasil eksekusi fungsi)
+  // Kasus multi-turn conversation (bisa mencakup role: "tool" atau "toolResult" hasil eksekusi fungsi)
   let promptBuilder = "";
   if (systemInstruction) {
     promptBuilder += `(Petunjuk / System Directive: ${systemInstruction})\n\n`;
@@ -729,28 +761,30 @@ function formatMessagesToPrompt(messages, tools = []) {
   promptBuilder += "[Riwayat Percakapan]\n";
   for (let i = 0; i < convo.length - 1; i++) {
     const msg = convo[i];
-    if (msg.role === "tool") {
+    const text = extractTextContent(msg.content);
+    if (msg.role === "tool" || msg.role === "toolResult") {
       const toolId = msg.name || msg.tool_call_id || "eksternal";
-      promptBuilder += `[Hasil Eksekusi Tool (${toolId})]:\n${(msg.content || "").trim()}\n\n`;
+      promptBuilder += `[Hasil Eksekusi Tool (${toolId})]:\n${text}\n\n`;
     } else if (msg.role === "assistant") {
       if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
         const callsStr = msg.tool_calls.map(tc => `${tc.function?.name || tc.name}(${tc.function?.arguments || JSON.stringify(tc.arguments || {})})`).join(", ");
         promptBuilder += `Assistant [Memanggil Tool: ${callsStr}]\n\n`;
       } else {
-        promptBuilder += `Assistant: ${(msg.content || "").trim()}\n\n`;
+        promptBuilder += `Assistant: ${text}\n\n`;
       }
     } else {
-      promptBuilder += `User: ${(msg.content || "").trim()}\n\n`;
+      promptBuilder += `User: ${text}\n\n`;
     }
   }
 
   const lastMsg = convo[convo.length - 1];
-  if (lastMsg.role === "tool") {
+  const lastText = extractTextContent(lastMsg.content);
+  if (lastMsg.role === "tool" || lastMsg.role === "toolResult") {
     const toolId = lastMsg.name || lastMsg.tool_call_id || "eksternal";
-    promptBuilder += `[Hasil Eksekusi Tool (${toolId})]:\n${(lastMsg.content || "").trim()}\n\nJawablah permintaan awal pengguna berdasarkan hasil tool di atas:`;
+    promptBuilder += `[Hasil Eksekusi Tool (${toolId})]:\n${lastText}\n\nJawablah permintaan awal pengguna berdasarkan hasil tool di atas:`;
   } else {
     promptBuilder += "[Permintaan Pengguna Saat Ini]\n";
-    promptBuilder += `${(lastMsg.content || "").trim()}`;
+    promptBuilder += `${lastText}`;
   }
 
   const finalPrompt = promptBuilder.trim();
@@ -879,14 +913,22 @@ async function handleBridgeMessage(msg) {
 
   if (msg.type === "completionRequest" || msg.type === "responsesRequest") {
     const req = msg.request || {};
-    const modelId = req.model;
-    const modelConfig = models.find(m => m.id === modelId && m.enabled !== false);
+    const rawModelId = typeof req.model === "string" ? req.model.trim() : "";
+    const cleanModelId = rawModelId.includes("/") ? rawModelId.split("/").pop().trim().toLowerCase() : rawModelId.toLowerCase();
+
+    // Cari model berdasarkan exact match atau clean/stripped prefix match
+    const modelConfig = models.find(m => {
+      if (m.enabled === false) return false;
+      if (m.id === rawModelId) return true;
+      const mIdClean = (m.id || "").toLowerCase();
+      return mIdClean === cleanModelId || mIdClean === rawModelId.toLowerCase();
+    });
 
     if (!modelConfig) {
       sendToBridge({
         type: "streamError",
         requestId: msg.requestId,
-        error: `Model '${modelId}' is not registered or enabled in ZeroLLM extension`
+        error: `Model '${rawModelId}' is not registered or enabled in ZeroLLM extension`
       });
       return;
     }
@@ -901,9 +943,9 @@ async function handleBridgeMessage(msg) {
     }
 
     // ── CEK IN-MEMORY CACHE (INSTANT 10ms RESPONSE) ──
-    const cached = getFromCache(modelId, query);
+    const cached = getFromCache(modelConfig.id, query);
     if (cached) {
-      console.log(`[ZeroLLM Cache] ⚡ Cache HIT for model '${modelId}' (0ms frontend latency)`);
+      console.log(`[ZeroLLM Cache] ⚡ Cache HIT for model '${modelConfig.id}' (0ms frontend latency)`);
       if (req.stream !== false && cached.content) {
         sendToBridge({
           type: "stream",
