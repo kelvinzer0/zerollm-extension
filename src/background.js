@@ -358,13 +358,15 @@ function connectBridge(url, room, key) {
       // Sinkronisasi model ke Cloudflare Worker
       syncModelsToBridge();
 
-      // Mulai heartbeat keepalive aktif setiap 15 detik agar koneksi tidak pernah putus/hibernasi
+      // Mulai heartbeat keepalive aktif setiap 5 detik agar Service Worker MV3 tidak pernah dihentikan Chrome
       clearInterval(pingInterval);
       pingInterval = setInterval(() => {
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "pong" }));
+          // Touching Chrome API resets the MV3 30-second service worker idle timer
+          try { chrome.runtime.getPlatformInfo(() => {}); } catch (e) {}
         }
-      }, 15000);
+      }, 5000);
     };
 
     ws.onmessage = (event) => {
@@ -383,7 +385,7 @@ function connectBridge(url, room, key) {
       ws = null;
       reconnectTimer = setTimeout(() => {
         if (bridgeUrl && roomId) connectBridge(bridgeUrl, roomId, apiKey);
-      }, 3000);
+      }, 1000);
     };
 
     ws.onerror = (err) => {
