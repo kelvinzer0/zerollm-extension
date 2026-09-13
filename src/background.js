@@ -1049,10 +1049,10 @@ async function executeParallelTask(task) {
 
     // 4. Eksekusi prompt dan TUNGGU hingga respon model ini selesai
     await new Promise(async (resolve, reject) => {
-      const timeoutMs = 120000;
+      const timeoutMs = 300000; // 5 menit timeout untuk deep reasoning / long research
       const timer = setTimeout(() => {
         activeRequests.delete(task.requestId);
-        reject(new Error(`Timeout waiting for AI response from model '${task.modelConfig.id}' after 120s`));
+        reject(new Error(`Timeout waiting for AI response from model '${task.modelConfig.id}' after 300s`));
       }, timeoutMs);
 
       activeRequests.set(task.requestId, {
@@ -1148,10 +1148,10 @@ async function processGlobalQueue() {
 
     // 4. Eksekusi prompt dan TUNGGU hingga generasi respon SELESAI
     await new Promise(async (resolve, reject) => {
-      const timeoutMs = 120000; // 2 menit timeout keamanan
+      const timeoutMs = 300000; // 5 menit timeout untuk deep reasoning / long research
       const timer = setTimeout(() => {
         activeRequests.delete(task.requestId);
-        reject(new Error(`Timeout waiting for AI response from model '${task.modelConfig.id}' after 120s`));
+        reject(new Error(`Timeout waiting for AI response from model '${task.modelConfig.id}' after 300s`));
       }, timeoutMs);
 
       activeRequests.set(task.requestId, {

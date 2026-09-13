@@ -563,7 +563,7 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
     let streamStarted = false;
     let stableCount = 0;
     let pollCount = 0;
-    const maxPolls = 180; // 90 seconds max
+    const maxPolls = 600; // 300 seconds (5 minutes) max for deep reasoning & long research
 
     const interval = setInterval(() => {
       pollCount++;
@@ -680,8 +680,9 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
         return;
       }
 
-      // Safety timeout
-      if (pollCount >= maxPolls) {
+      // Safety timeout (hanya timeout jika batas tercapai DAN model tidak lagi dalam status streaming aktif)
+      const hardTimeoutPolls = 900; // 450 detik (7.5 menit) batas absolut
+      if ((pollCount >= maxPolls && !isStreaming) || pollCount >= hardTimeoutPolls) {
         clearInterval(interval);
         if (lastMarkdown && hasMeaningfulText && !thinkingOnly) {
           console.log(`[ZeroLLM Monitor] Max polls reached, returning last stable text (${lastMarkdown.length} chars)`);
