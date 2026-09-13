@@ -183,9 +183,12 @@ async function getTabForModel(modelConfig) {
 
     // 3. Jika belum ada: Buka Jendela Baru Khusus (Dedicated Window) untuk model ini!
     console.log(`[ZeroLLM Parallel] Opening dedicated window for model ${modelConfig.id}...`);
-    let targetUrl = modelConfig.urlPattern.replace(/\*/g, "");
-    if (!targetUrl.startsWith("http")) {
-      targetUrl = "https://" + targetUrl.replace(/^\/+/, "");
+    let targetUrl = modelConfig.defaultUrl;
+    if (!targetUrl) {
+      targetUrl = modelConfig.urlPattern.replace(/^\*:\/\//, "https://").replace(/\*+/g, "");
+      if (!targetUrl.startsWith("http")) {
+        targetUrl = "https://" + targetUrl.replace(/^[:\/]+/, "");
+      }
     }
 
     const newWin = await chrome.windows.create({
@@ -246,9 +249,9 @@ async function getTabForModel(modelConfig) {
   console.log(`[ZeroLLM] No tab open for ${modelConfig.id}. Opening target URL automatically...`);
   let targetUrl = modelConfig.defaultUrl;
   if (!targetUrl) {
-    targetUrl = modelConfig.urlPattern.replace(/\*/g, "");
+    targetUrl = modelConfig.urlPattern.replace(/^\*:\/\//, "https://").replace(/\*+/g, "");
     if (!targetUrl.startsWith("http")) {
-      targetUrl = "https://" + targetUrl.replace(/^\/+/, "");
+      targetUrl = "https://" + targetUrl.replace(/^[:\/]+/, "");
     }
   }
 
