@@ -528,6 +528,19 @@ function safeParseJsonArgs(argsStr, fnName) {
   if (!argsStr || typeof argsStr !== "string") return "{}";
   argsStr = argsStr.trim();
 
+  // 0. Ekstraksi dan sanitasi tag <zerollm_code> di dalam argumen tool
+  const pureCodeMatch = argsStr.match(/^<zerollm_code[^>]*>([\s\S]*?)<\/zerollm_code>$/i);
+  if (pureCodeMatch) {
+    argsStr = pureCodeMatch[1].trim();
+  } else {
+    // Normalisasi unquoted <zerollm_code> di dalam properti JSON
+    argsStr = argsStr.replace(/:\s*<zerollm_code[^>]*>([\s\S]*?)<\/zerollm_code>/gi, (m, codeContent) => {
+      return ": " + JSON.stringify(codeContent.trim());
+    });
+    // Bersihkan tag pembungkus <zerollm_code> dari nilai teks tapi pertahankan isi kodenya
+    argsStr = argsStr.replace(/<zerollm_code[^>]*>([\s\S]*?)<\/zerollm_code>/gi, "$1");
+  }
+
   // 1. Coba parse langsung jika sudah valid JSON
   try {
     const parsed = JSON.parse(argsStr);
@@ -869,6 +882,20 @@ function formatMessagesToPrompt(messages, tools = []) {
     systemParts.push(toolDirective);
   }
 
+  // Aturan penulisan kode / snippet (<zerollm_code>)
+  const codeDirective = [
+    "[ATURAN PENULISAN KODE / SNIPPET]",
+    "Jika jawaban Anda memuat kode pemrograman, script shell/bash, konfigurasi, atau cuplikan kode (snippet):",
+    "Anda WAJIB membungkus seluruh blok kode di dalam tag resmi:",
+    "<zerollm_code>",
+    "// Tulis kode atau snippet di sini",
+    "</zerollm_code>",
+    "(Atau dengan atribut bahasa: <zerollm_code lang=\"python\">...</zerollm_code>)",
+    "DILARANG KERAS menggunakan format markdown triple backticks (``` atau ```lang) untuk kode. Semua kode WAJIB ditempatkan di dalam tag <zerollm_code>.",
+    "Catatan: Tag <zerollm_code> juga dapat digunakan di dalam pemanggilan tool jika relevan."
+  ].join("\n");
+  systemParts.push(codeDirective);
+
   const systemInstruction = systemParts.join("\n\n");
 
   // 3. Kumpulkan percakapan non-sistem
@@ -894,6 +921,7 @@ function formatMessagesToPrompt(messages, tools = []) {
   } else {
     endGuidance += "3. Jika pertanyaan pengguna TIDAK membutuhkan tool sama sekali, jawablah langsung secara alami tanpa tag <zerollm_*> apapun.";
   }
+  endGuidance += "\n[ATURAN KODE]: Ingat, JANGAN gunakan format markdown ``` untuk kode atau snippet. Gunakan selalu tag <zerollm_code>...</zerollm_code>.";
 
   // Jika tidak ada percakapan non-sistem, kirim instruksi sistem saja
   if (convo.length === 0) {
