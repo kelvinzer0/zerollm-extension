@@ -525,8 +525,8 @@ function parseToolCalls(text) {
 
   const calls = [];
 
-  // Pola 1 (Utama ZeroLLM): <zerollm_call name="...">...</zerollm_call> atau <action name="...">...</action>
-  const tagRegex = /<(?:zerollm_call|zerollm:call|action|call)\s+name=["\x27]([\w_-]+)["\x27]\s*>([\s\S]*?)<\/(?:zerollm_call|zerollm:call|action|call)>/gi;
+  // Pola 1 (Utama ZeroLLM): <zerollm_tool_call name="...">...</zerollm_tool_call> atau <zerollm_call name="...">
+  const tagRegex = /<(?:zerollm_tool_call|zerollm_call|zerollm:call|action|call)[^>]*?\s+name=["\x27]([\w_-]+)["\x27][^>]*>([\s\S]*?)<\/(?:zerollm_tool_call|zerollm_call|zerollm:call|action|call)>/gi;
   let match;
   while ((match = tagRegex.exec(text)) !== null) {
     const fnName = match[1];
@@ -711,8 +711,10 @@ function formatMessagesToPrompt(messages, tools = []) {
     .map(m => extractTextContent(m.content))
     .filter(Boolean);
 
+  const hasTools = Array.isArray(tools) && tools.length > 0;
+
   // 2. Jika ada tools eksternal terdaftar, lapisi dengan instruksi pemanggilan tool ZeroLLM
-  if (Array.isArray(tools) && tools.length > 0) {
+  if (hasTools) {
     let toolDirective = "Fungsi/Tools eksternal yang tersedia:\n";
     const isLargeToolSet = tools.length > 10;
 
@@ -726,12 +728,12 @@ function formatMessagesToPrompt(messages, tools = []) {
       toolDirective += `${idx + 1}. ${fn.name}(${params})${desc}\n`;
     });
 
-    toolDirective += "\n[ATURAN PEMANGGILAN TOOL]\n";
+    toolDirective += "\n[ATURAN PEMANGGILAN TOOL - OPENAI SPEC]\n";
     toolDirective += "Jika permintaan pengguna membutuhkan informasi eksternal atau fungsi di atas:\n";
-    toolDirective += "Anda WAJIB memanggil fungsinya dengan tag format berikut tanpa teks pembuka/penutup lainnya:\n";
-    toolDirective += '<zerollm_call name="nama_fungsi">{"parameter": "nilai"}</zerollm_call>\n';
+    toolDirective += "Anda WAJIB memanggil fungsinya dengan format tag resmi berikut tanpa teks pembuka/penutup lainnya:\n";
+    toolDirective += '<zerollm_tool_call name="nama_fungsi">{"parameter": "nilai"}</zerollm_tool_call>\n';
     toolDirective += "Contoh:\n";
-    toolDirective += '<zerollm_call name="get_current_weather">{"location": "Tokyo", "unit": "celsius"}</zerollm_call>';
+    toolDirective += '<zerollm_tool_call name="get_current_weather">{"location": "Jakarta"}</zerollm_tool_call>';
 
     systemParts.push(toolDirective);
   }
@@ -740,19 +742,39 @@ function formatMessagesToPrompt(messages, tools = []) {
 
   // 3. Kumpulkan percakapan non-sistem
   const convo = messages.filter(m => m.role !== "system" && m.role !== "developer");
+  const hasToolResultInHistory = convo.some(m => m.role === "tool" || m.role === "toolResult");
+
+  // Panduan alur respons di bagian akhir (Recency Attention)
+  let endGuidance = "\n\n[PANDUAN CARA MENJAWAB UNTUK AI]:\n";
+  if (hasTools) {
+    endGuidance += "1. Tahap 1 (Pemanggilan Tool): Jika pertanyaan pengguna membutuhkan data eksternal/fungsi di atas, JANGAN meminta maaf atau menolak dengan alasan tidak ada akses. Sistem ZeroLLM yang akan mengeksekusinya untuk Anda!\n";
+    endGuidance += "   Anda WAJIB LANGSUNG membalas HANYA dengan tag pemanggilan tool:\n";
+    endGuidance += '   <zerollm_tool_call name="nama_fungsi">{"parameter": "nilai"}</zerollm_tool_call>\n';
+  }
+  if (hasToolResultInHistory) {
+    endGuidance += "2. Tahap 2 (Hasil Tool): Di dalam riwayat terdapat tag <zerollm_tool_result>. Jawablah pertanyaan awal pengguna berdasarkan data hasil tool tersebut secara langsung dan alami tanpa tag apapun.\n";
+  }
+  if (!hasTools && !hasToolResultInHistory) {
+    endGuidance += "Jawablah permintaan pengguna di dalam <zerollm_user> terakhir secara langsung dan alami tanpa menyertakan tag <zerollm_*> apapun.";
+  } else {
+    endGuidance += "3. Jika pertanyaan pengguna TIDAK membutuhkan tool, jawablah langsung secara alami tanpa tag <zerollm_*> apapun.";
+  }
 
   // Jika tidak ada percakapan non-sistem, kirim instruksi sistem saja
   if (convo.length === 0) {
-    return `<zerollm_system>\n${stripInboundMeta(systemInstruction)}\n</zerollm_system>`;
+    return `<zerollm_system>\n${stripInboundMeta(systemInstruction)}\n</zerollm_system>${endGuidance}`;
   }
 
   // Kasus 1 pesan user tunggal (tanpa riwayat multi-turn)
   if (convo.length === 1 && convo[0].role === "user") {
     const userPrompt = stripInboundMeta(extractTextContent(convo[0].content));
+    let result = "";
     if (systemInstruction) {
-      return `<zerollm_system>\n${stripInboundMeta(systemInstruction)}\n</zerollm_system>\n\n<zerollm_user>\n${userPrompt}\n</zerollm_user>`;
+      result = `<zerollm_system>\n${stripInboundMeta(systemInstruction)}\n</zerollm_system>\n\n<zerollm_user>\n${userPrompt}\n</zerollm_user>`;
+    } else {
+      result = `<zerollm_user>\n${userPrompt}\n</zerollm_user>`;
     }
-    return `<zerollm_user>\n${userPrompt}\n</zerollm_user>`;
+    return (result + endGuidance).trim();
   }
 
   // Kasus multi-turn conversation (dibungkus tag awal dan akhir per giliran)
@@ -766,10 +788,10 @@ function formatMessagesToPrompt(messages, tools = []) {
     const text = stripInboundMeta(extractTextContent(msg.content));
     if (msg.role === "tool" || msg.role === "toolResult") {
       const toolId = msg.name || msg.tool_call_id || "eksternal";
-      promptBuilder += `<zerollm_tool name="${toolId}">\n${text}\n</zerollm_tool>\n\n`;
+      promptBuilder += `<zerollm_tool_result name="${toolId}">\n${text}\n</zerollm_tool_result>\n\n`;
     } else if (msg.role === "assistant") {
       if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
-        const callsStr = msg.tool_calls.map(tc => `<zerollm_call name="${tc.function?.name || tc.name}">${tc.function?.arguments || JSON.stringify(tc.arguments || {})}</zerollm_call>`).join("\n");
+        const callsStr = msg.tool_calls.map(tc => `<zerollm_tool_call name="${tc.function?.name || tc.name}">${tc.function?.arguments || JSON.stringify(tc.arguments || {})}</zerollm_tool_call>`).join("\n");
         promptBuilder += `<zerollm_assistant>\n${callsStr}\n</zerollm_assistant>\n\n`;
       } else {
         promptBuilder += `<zerollm_assistant>\n${text}\n</zerollm_assistant>\n\n`;
@@ -783,11 +805,12 @@ function formatMessagesToPrompt(messages, tools = []) {
   const lastText = stripInboundMeta(extractTextContent(lastMsg.content));
   if (lastMsg.role === "tool" || lastMsg.role === "toolResult") {
     const toolId = lastMsg.name || lastMsg.tool_call_id || "eksternal";
-    promptBuilder += `<zerollm_tool name="${toolId}">\n${lastText}\n</zerollm_tool>\n\nJawablah permintaan awal pengguna berdasarkan hasil tool di atas.`;
+    promptBuilder += `<zerollm_tool_result name="${toolId}">\n${lastText}\n</zerollm_tool_result>\n\nJawablah permintaan awal pengguna berdasarkan hasil tool di atas.`;
   } else {
     promptBuilder += `<zerollm_user>\n${lastText}\n</zerollm_user>`;
   }
 
+  promptBuilder += endGuidance;
   return promptBuilder.trim();
 }
 
