@@ -94,7 +94,7 @@ export const DEFAULT_PRESETS = [
     startChatSelector: "textarea#chat-input, textarea.ds-scroll-area, textarea[placeholder*='DeepSeek'], textarea[placeholder*='Pesan DeepSeek'], textarea[placeholder*='Send DeepSeek'], textarea",
     continueChatSelector: "textarea#chat-input, textarea.ds-scroll-area, textarea[placeholder*='DeepSeek'], textarea[placeholder*='Pesan DeepSeek'], textarea[placeholder*='Send DeepSeek'], textarea",
     streamSelector: "button[aria-label*='Stop'], div[class*='stop'], .ds-icon-button:has(svg rect), [aria-label*='停止生成']",
-    doneSelector: "div[role='button']:has(svg):not([aria-disabled='true']), button[aria-label*='Send']:not([disabled]), div[class*='send-button']:not([aria-disabled='true'])",
+    doneSelector: "div[role='button'].ds-button--primary:not([aria-disabled='true']), .ds-button--primary:not([aria-disabled='true']), .ds-button--circle:not([aria-disabled='true']), button[aria-label*='Send']:not([disabled]), div[class*='send-button']:not([aria-disabled='true'])",
     resultContainerSelector: ".ds-markdown, .ds-markdown--block, [class*='message-content'], [data-role='assistant'], div.chat-message-bubble",
     description: "DeepSeek Web AI Interface (DeepSeek-V3 & DeepSeek-R1)"
   },
