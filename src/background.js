@@ -876,8 +876,16 @@ function formatMessagesToPrompt(messages, tools = []) {
     toolDirective += "Anda WAJIB memanggil fungsinya dengan format tag resmi berikut tanpa teks pembuka/penutup lainnya:\n";
     toolDirective += '<zerollm_tool_call name="nama_fungsi">{"parameter": "nilai"}</zerollm_tool_call>\n';
     toolDirective += "Contoh:\n";
-    toolDirective += '<zerollm_tool_call name="get_current_weather">{"location": "Jakarta"}</zerollm_tool_call>\n';
-    toolDirective += "Sistem mendukung pemanggilan tool secara bertahap (multi-step chaining). Anda bebas memanggil tool berikutnya secara berantai jika informasi belum lengkap.";
+    toolDirective += '<zerollm_tool_call name="get_current_weather">{"location": "Jakarta"}</zerollm_tool_call>\n\n';
+    toolDirective += "[EFISIENSI EKSEKUSI PERINTAH SHELL / LINUX]:\n";
+    toolDirective += "Jika Anda menggunakan tool yang berhubungan dengan shell/terminal (seperti exec, bash, terminal, dll.):\n";
+    toolDirective += "1. Mode Langsung (Chaining '&&'): Gabungkan perintah-perintah Linux yang berurutan atau saling berkaitan ke dalam satu perintah tunggal menggunakan operator '&&' (atau ';' / '|' jika relevan) untuk meminimalkan putaran giliran.\n";
+    toolDirective += '   Contoh: <zerollm_tool_call name="exec">{"command": "cd /root/app && git pull && npm test"}</zerollm_tool_call>\n';
+    toolDirective += "2. Mode Background / Daemon: Jika perintah berupa proses jangka panjang, web server, service, watcher, atau build yang memakan waktu:\n";
+    toolDirective += "   - Gunakan parameter \"background\": true jika tool mendukungnya (seperti OpenClaw exec).\n";
+    toolDirective += "   - Atau jalankan di background melalui shell (contoh: nohup ... > output.log 2>&1 &).\n";
+    toolDirective += '   Contoh: <zerollm_tool_call name="exec">{"command": "npm start", "background": true}</zerollm_tool_call>\n';
+    toolDirective += "3. Multi-Step Chaining: Anda bebas melanjutkan dengan pemanggilan tool berikutnya secara bertahap jika informasi belum lengkap.";
 
     systemParts.push(toolDirective);
   }
@@ -908,6 +916,7 @@ function formatMessagesToPrompt(messages, tools = []) {
     endGuidance += "1. Tahap 1 (Pemanggilan Tool): Jika pertanyaan pengguna membutuhkan data eksternal/fungsi di atas, JANGAN meminta maaf atau menolak dengan alasan tidak ada akses. Sistem ZeroLLM yang akan mengeksekusinya untuk Anda!\n";
     endGuidance += "   Anda WAJIB LANGSUNG membalas HANYA dengan tag pemanggilan tool:\n";
     endGuidance += '   <zerollm_tool_call name="nama_fungsi">{"parameter": "nilai"}</zerollm_tool_call>\n';
+    endGuidance += "   Untuk perintah shell: Gabungkan langkah terkait menggunakan '&&', atau gunakan 'background': true jika berupa proses daemon.\n";
   }
   if (hasToolResultInHistory) {
     endGuidance += "2. Tahap 2 (Evaluasi Hasil Tool & Multi-Step Execution):\n";
