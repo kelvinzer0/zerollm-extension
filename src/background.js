@@ -896,6 +896,10 @@ async function handleBridgeMessage(msg) {
       query = formatMessagesToPrompt(req.messages, req.tools);
     } else if (typeof req.prompt === "string") {
       query = req.prompt;
+    } else if (typeof req.input === "string") {
+      query = req.input;
+    }
+
     // ── CEK IN-MEMORY CACHE (INSTANT 10ms RESPONSE) ──
     const cached = getFromCache(modelId, query);
     if (cached) {
