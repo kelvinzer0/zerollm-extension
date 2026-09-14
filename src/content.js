@@ -404,6 +404,11 @@ function cleanResultMarkdown(markdown) {
     .replace(/(?:\n+|^)(?:Generating(?:\.{0,3}|…)?|Sedang membuat(?:\.{0,3}|…)?|Sedang menghasilkan(?:\.{0,3}|…)?)\s*(?:\n+|$)/gim, "\n\n")
     // Hapus footer disclaimer kuota / gambar ChatGPT ("File, Gambar, dan analisis data tidak tersedia...")
     .replace(/(?:\n+|^)(?:File,\s*Gambar[^\n]*|Files?,\s*images?[^\n]*|analisis data tidak tersedia[^\n]*|Lanjutkan chat hanya dengan teks[^\n]*|Tingkatkan untuk akses lebih luas[^\n]*|Upgrade to Plus[^\n]*|Usage limit reached[^\n]*|penggunaan direset[^\n]*).*$/gim, "")
+    // Hapus header evaluasi A/B testing Qwen Studio ("This feedback will help us evaluate...", "Which response do you prefer?...")
+    .replace(/^(?:This feedback will help us evaluate[^\n]*\n*)/gim, "")
+    .replace(/^(?:Which response do you prefer[^\n]*\n*)/gim, "")
+    .replace(/^Response\s*1\s*/gim, "")
+    .replace(/Response\s*2.*$/gims, "")
     // Hapus footer citation / source disclaimer ("Citation sources (0)")
     .replace(/(?:\n+|^)(?:Citation sources\s*(?:\(\d+\))?|Sources\s*(?:\(\d+\))?|Referensi\s*(?:\(\d+\))?)[^\n]*$/gim, "")
     .replace(/\n{3,}/g, "\n\n");
