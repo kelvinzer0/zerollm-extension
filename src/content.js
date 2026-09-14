@@ -925,14 +925,47 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 // Keep-Alive connection to background service worker to prevent MV3 hibernation
 let keepAlivePort = null;
+let isPageBfCached = false;
+
 function setupKeepAlivePort() {
+  if (isPageBfCached) return;
+  if (keepAlivePort) return;
+
   try {
     keepAlivePort = chrome.runtime.connect({ name: "zerollm-keepalive" });
     keepAlivePort.onDisconnect.addListener(() => {
+      // Access chrome.runtime.lastError to clear unchecked error on bfcache transition
+      const _ = chrome.runtime.lastError;
       keepAlivePort = null;
-      setTimeout(setupKeepAlivePort, 2000);
+      if (!isPageBfCached) {
+        setTimeout(setupKeepAlivePort, 5000);
+      }
     });
-  } catch (e) {}
+  } catch (e) {
+    keepAlivePort = null;
+  }
 }
+
+window.addEventListener("pagehide", (event) => {
+  if (event.persisted) {
+    isPageBfCached = true;
+  }
+  if (keepAlivePort) {
+    try { keepAlivePort.disconnect(); } catch (_) {}
+    keepAlivePort = null;
+  }
+});
+
+window.addEventListener("pageshow", (event) => {
+  isPageBfCached = false;
+  setupKeepAlivePort();
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    setupKeepAlivePort();
+  }
+});
+
 setupKeepAlivePort();
 
