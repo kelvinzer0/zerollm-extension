@@ -9,7 +9,8 @@
     "scripting",
     "storage",
     "debugger",
-    "alarms"
+    "alarms",
+    "declarativeNetRequest"
   ],
   "host_permissions": [
     "<all_urls>",

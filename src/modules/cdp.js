@@ -27,7 +27,7 @@ export async function nativeTypeAndSend(tabId, text, modelConfig) {
       };
     }
 
-    await new Promise(r => setTimeout(r, 200));
+    await new Promise(r => setTimeout(r, 60));
 
     // 2. Fallback: Attach Chrome Debugger untuk mengetik via CDP
     await chrome.debugger.attach(debuggee, "1.3");
@@ -36,8 +36,8 @@ export async function nativeTypeAndSend(tabId, text, modelConfig) {
     // 3. Ketikkan teks menggunakan Input.insertText
     await chrome.debugger.sendCommand(debuggee, "Input.insertText", { text });
     
-    // Jeda 450ms agar React Lexical / ProseMirror selesai memproses state internal
-    await new Promise(r => setTimeout(r, 450));
+    // Jeda 120ms agar React Lexical / ProseMirror selesai memproses state internal
+    await new Promise(r => setTimeout(r, 120));
 
     // 4. Tekan tombol Enter menggunakan Input.dispatchKeyEvent standar keyboard hardware
     await chrome.debugger.sendCommand(debuggee, "Input.dispatchKeyEvent", {
@@ -58,7 +58,7 @@ export async function nativeTypeAndSend(tabId, text, modelConfig) {
       nativeVirtualKeyCode: 13
     });
 
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 80));
 
     // Pastikan tombol Kirim/Submit terklik jika Enter hardware tidak otomatis men-submit
     await chrome.tabs.sendMessage(tabId, {

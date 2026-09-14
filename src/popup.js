@@ -8,6 +8,9 @@ const modelCountBadge = document.getElementById("modelCountBadge");
 const parallelToggle = document.getElementById("parallelToggle");
 const modeBadge = document.getElementById("modeBadge");
 const modeDesc = document.getElementById("modeDesc");
+const mediaBlockToggle = document.getElementById("mediaBlockToggle");
+const mediaBlockBadge = document.getElementById("mediaBlockBadge");
+const mediaBlockDesc = document.getElementById("mediaBlockDesc");
 
 // Form elements
 const mId = document.getElementById("mId");
@@ -153,6 +156,15 @@ function updateState(state) {
       : "Mode Aktif: Sequential Queue (1 jendela bergantian, hemat memori, tab lock anti-mogok).";
   }
 
+  // Media Blocker toggle state
+  const isBlockMedia = state.blockMedia !== false;
+  if (mediaBlockToggle) mediaBlockToggle.checked = isBlockMedia;
+  if (mediaBlockBadge) {
+    mediaBlockBadge.textContent = isBlockMedia ? "Active" : "Off";
+    mediaBlockBadge.style.color = isBlockMedia ? "#10b981" : "#ef4444";
+    mediaBlockBadge.style.background = isBlockMedia ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)";
+  }
+
   renderModels(state.models);
 }
 
@@ -172,6 +184,21 @@ if (parallelToggle) {
       modeDesc.textContent = e.target.checked
         ? "Mode Aktif: Multi-Window (Setiap AI di jendela terpisah, respon serentak paralel)."
         : "Mode Aktif: Sequential Queue (1 jendela bergantian, hemat memori, tab lock anti-mogok).";
+    }
+  });
+}
+
+if (mediaBlockToggle) {
+  mediaBlockToggle.addEventListener("change", (e) => {
+    const enabled = e.target.checked;
+    chrome.runtime.sendMessage({
+      type: "setBlockMedia",
+      enabled
+    }).catch(() => {});
+    if (mediaBlockBadge) {
+      mediaBlockBadge.textContent = enabled ? "Active" : "Off";
+      mediaBlockBadge.style.color = enabled ? "#10b981" : "#ef4444";
+      mediaBlockBadge.style.background = enabled ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)";
     }
   });
 }

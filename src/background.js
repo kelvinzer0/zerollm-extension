@@ -41,10 +41,12 @@ import {
   configureBridge,
   broadcastBridgeState
 } from "./modules/bridge.js";
+import { setMediaBlocker } from "./modules/media-blocker.js";
 
 // Models state & execution mode
 let models = [...DEFAULT_PRESETS];
 let executionMode = "parallel"; // "sequential" | "parallel"
+let blockMedia = true; // Ultra-Speed native declarative image/media blocker
 
 // Task management
 const globalQueue = [];
@@ -71,6 +73,7 @@ function broadcastState(extra = {}) {
       apiKey: currentBridge.apiKey,
       models,
       executionMode,
+      blockMedia,
       ...extra
     }
   }).catch(() => {});
@@ -78,7 +81,7 @@ function broadcastState(extra = {}) {
 
 // ── Storage & Initialization ──────────────────────────────────────────
 async function loadModels() {
-  const data = await chrome.storage.local.get(["customModels", "bridgeUrl", "roomId", "apiKey", "executionMode"]);
+  const data = await chrome.storage.local.get(["customModels", "bridgeUrl", "roomId", "apiKey", "executionMode", "blockMedia"]);
   if (data.customModels && Array.isArray(data.customModels) && data.customModels.length > 0) {
     const existingIds = new Set(data.customModels.map(m => m.id));
     let updatedModels = data.customModels.map(m => {
@@ -113,8 +116,10 @@ async function loadModels() {
   let roomId = data.roomId || "default";
   let apiKey = data.apiKey || "";
   if (data.executionMode) executionMode = data.executionMode;
+  if (data.blockMedia !== undefined) blockMedia = Boolean(data.blockMedia);
 
   setBridgeCredentials(bridgeUrl, roomId, apiKey);
+  setMediaBlocker(blockMedia, models);
 
   if (!roomId || roomId === "default" || roomId.trim() === "") {
     await ensureRoomAndKey();
@@ -351,11 +356,10 @@ async function processGlobalQueue() {
       originalTabId = currentActive.id;
       console.log(`[ZeroLLM TabLock] Switching active tab from #${originalTabId} to target tab #${targetTabId}`);
       await chrome.tabs.update(targetTabId, { active: true });
-      await new Promise(r => setTimeout(r, 250));
+      await new Promise(r => setTimeout(r, 60));
     }
 
     await waitForTabComplete(targetTabId, 15000);
-    await new Promise(r => setTimeout(r, 600));
     await navigateToHomeAreaIfNeeded(targetTabId, task.modelConfig);
     await ensureContentScript(targetTabId);
 
@@ -515,7 +519,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         roomId: bState.roomId,
         apiKey: bState.apiKey,
         models,
-        executionMode
+        executionMode,
+        blockMedia
       });
       return false;
     }
@@ -525,6 +530,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       chrome.storage.local.set({ executionMode });
       broadcastState();
       sendResponse({ success: true, executionMode });
+      return false;
+    }
+
+    case "setBlockMedia": {
+      blockMedia = Boolean(msg.enabled);
+      chrome.storage.local.set({ blockMedia });
+      setMediaBlocker(blockMedia, models);
+      broadcastState();
+      sendResponse({ success: true, blockMedia });
       return false;
     }
 

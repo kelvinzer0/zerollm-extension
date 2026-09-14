@@ -571,7 +571,7 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
     let streamStarted = false;
     let stableCount = 0;
     let pollCount = 0;
-    const maxPolls = 600; // 300 seconds (5 minutes) max for deep reasoning & long research
+    const maxPolls = 2000; // 300 seconds (5 minutes) max for deep reasoning & long research
 
     const interval = setInterval(() => {
       pollCount++;
@@ -628,13 +628,13 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
         stableCount = 0;
       }
 
-      if (pollCount % 10 === 0 || pollCount <= 3) {
+      if (pollCount % 20 === 0 || pollCount <= 3) {
         console.log(`[ZeroLLM Monitor] Poll #${pollCount}: containers=${currentContainers.length}, streaming=${isStreaming}, streamStarted=${streamStarted}, textLen=${meaningfulMarkdown.length}, stable=${stableCount}`);
       }
 
       // ── DETEKSI AI BENGONG -> AUTO NEW CHAT & RETRY ──
-      // Jika setelah 12.5 detik (25 polls) belum ada respon mengalir sama sekali
-      if (!isRetry && pollCount === 25 && !streamStarted && !isStreaming) {
+      // Jika setelah 12 detik (80 polls @ 150ms) belum ada respon mengalir sama sekali
+      if (!isRetry && pollCount === 80 && !streamStarted && !isStreaming) {
         console.warn("[ZeroLLM Fallback] AI tidak merespon (bengong) setelah 12.5 detik. Membuka Obrolan Baru & mengulang...");
         
         // Coba picu tombol submit/enter sekali lagi
@@ -678,10 +678,10 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
 
       // Selesai jika:
       // 1. Teks baru terdeteksi (streamStarted) dan memiliki teks bermakna
-      // 2. Tidak lagi dalam status streaming ATAU teks sudah stabil minimal 3 detik (stableCount >= 6 fail-safe)
-      // 3. Teks stabil minimal 2 putaran polling (1 detik)
-      const isDoneStreaming = !isStreaming || stableCount >= 6;
-      if (streamStarted && hasMeaningfulText && !thinkingOnly && isDoneStreaming && stableCount >= 2 && pollCount >= 4) {
+      // 2. Tidak lagi dalam status streaming ATAU teks sudah stabil (stableCount >= 10 fail-safe: 1.5 detik)
+      // 3. Teks stabil minimal 2 putaran polling (300ms pada 150ms interval)
+      const isDoneStreaming = !isStreaming || stableCount >= 10;
+      if (streamStarted && hasMeaningfulText && !thinkingOnly && isDoneStreaming && stableCount >= 2 && pollCount >= 3) {
         clearInterval(interval);
         console.log(`[ZeroLLM Monitor] Response completed successfully (${meaningfulMarkdown.length} chars)`);
         resolve(cleanResultMarkdown(lastMarkdown));
@@ -689,7 +689,7 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
       }
 
       // Safety timeout (hanya timeout jika batas tercapai DAN model tidak lagi dalam status streaming aktif)
-      const hardTimeoutPolls = 900; // 450 detik (7.5 menit) batas absolut
+      const hardTimeoutPolls = 2500; // ~375 detik batas absolut
       if ((pollCount >= maxPolls && !isStreaming) || pollCount >= hardTimeoutPolls) {
         clearInterval(interval);
         if (lastMarkdown && hasMeaningfulText && !thinkingOnly) {
@@ -699,7 +699,7 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
           reject(new Error("Timeout waiting for AI response from page DOM"));
         }
       }
-    }, 500);
+    }, 150);
   });
 }
 
