@@ -23,7 +23,7 @@ let reconnectTimer = null;
 let pingInterval = null;
 
 // User defined & preset models
-let models = [];
+let models = [...DEFAULT_PRESETS];
 // Execution mode: "sequential" (single window queue) | "parallel" (dedicated multi-window parallel)
 let executionMode = "parallel";
 
@@ -610,7 +610,8 @@ function sendToBridge(data) {
 }
 
 function syncModelsToBridge() {
-  const activeModels = models
+  const sourceModels = (models && models.length > 0) ? models : DEFAULT_PRESETS;
+  const activeModels = sourceModels
     .filter(m => m.enabled !== false)
     .map(m => ({
       id: m.id,
@@ -939,6 +940,7 @@ function extractTextContent(content) {
           if (typeof part.content === "string") return part.content;
           if (part.type === "image_url" || part.type === "image") return "[Gambar]";
           if (part.type === "video_url" || part.type === "video") return "[Video]";
+          try { return JSON.stringify(part); } catch (e) {}
         }
         return String(part);
       })
@@ -949,8 +951,189 @@ function extractTextContent(content) {
   if (typeof content === "object") {
     if (typeof content.text === "string") return content.text.trim();
     if (typeof content.content === "string") return content.content.trim();
+    try {
+      return JSON.stringify(content);
+    } catch (e) {
+      return String(content).trim();
+    }
   }
   return String(content).trim();
+}
+
+/**
+ * Mencari nama fungsi tool asli dari riwayat assistant message jika hanya tool_call_id yang tersedia.
+ */
+function resolveToolName(convo, msg) {
+  if (msg.name && msg.name !== "eksternal") return msg.name;
+  const callId = msg.tool_call_id || msg.id;
+  if (!callId) return msg.name || "tool";
+
+  for (const m of convo) {
+    if (m.role === "assistant" && Array.isArray(m.tool_calls)) {
+      const matched = m.tool_calls.find(tc => tc.id === callId);
+      if (matched) {
+        return matched.function?.name || matched.name || "tool";
+      }
+    }
+  }
+  return msg.name || "tool";
+}
+
+function sanitizeXmlTag(key) {
+  if (!key) return "property";
+  let clean = String(key)
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, "_")
+    .replace(/^[^a-zA-Z_]+/, "_");
+  return clean || "property";
+}
+
+function escapeXmlAttr(str) {
+  if (!str) return "";
+  return String(str).replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/**
+ * Otomatis ubah markdown code block ```lang ke tag resmi <zerollm_code lang="lang">
+ * agar AI mematuhi format snippet ZeroLLM secara konsisten.
+ */
+function formatTextWithCodeTags(text) {
+  if (typeof text !== "string") return String(text);
+  return text.replace(/```([a-zA-Z0-9_-]*)\s*\n([\s\S]*?)\n```/g, (match, lang, code) => {
+    const langAttr = lang ? ` lang="${lang}"` : "";
+    return `<zerollm_code${langAttr}>\n${code}\n</zerollm_code>`;
+  });
+}
+
+/**
+ * Konversi rekursif dari nilai JavaScript (objek/array/primitif) ke XML style.
+ */
+function jsonToXml(data, indent = 1) {
+  if (data === null || data === undefined) return "";
+  if (typeof data !== "object") {
+    return formatTextWithCodeTags(String(data));
+  }
+
+  const spaces = "  ".repeat(indent);
+  let xml = "";
+
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      const child = jsonToXml(item, indent + 1);
+      if (child.includes("\n")) {
+        xml += `${spaces}<item>\n${child}\n${spaces}</item>\n`;
+      } else {
+        xml += `${spaces}<item>${child}</item>\n`;
+      }
+    }
+    return xml.trimEnd();
+  }
+
+  for (const [rawKey, val] of Object.entries(data)) {
+    const tag = sanitizeXmlTag(rawKey);
+    if (val === null || val === undefined) {
+      xml += `${spaces}<${tag}></${tag}>\n`;
+    } else if (typeof val === "object") {
+      const child = jsonToXml(val, indent + 1);
+      if (child) {
+        xml += `${spaces}<${tag}>\n${child}\n${spaces}</${tag}>\n`;
+      } else {
+        xml += `${spaces}<${tag}></${tag}>\n`;
+      }
+    } else {
+      const formattedVal = formatTextWithCodeTags(String(val));
+      if (formattedVal.includes("\n")) {
+        xml += `${spaces}<${tag}>\n${formattedVal}\n${spaces}</${tag}>\n`;
+      } else {
+        xml += `${spaces}<${tag}>${formattedVal}</${tag}>\n`;
+      }
+    }
+  }
+
+  return xml.trimEnd();
+}
+
+/**
+ * Mengubah hasil eksekusi tool (yang biasanya berupa JSON dari MCP / OpenAI client)
+ * menjadi struktur XML semantik murni yang intuitif dan mudah dipahami secara alami oleh AI.
+ */
+function formatToolResultToXml(content, toolName = "tool", toolCallId = "") {
+  let parsed = null;
+  let rawText = "";
+
+  if (typeof content === "object" && content !== null) {
+    parsed = content;
+  } else if (typeof content === "string") {
+    rawText = content.trim();
+    // Coba parse jika string adalah JSON
+    if ((rawText.startsWith("{") && rawText.endsWith("}")) || 
+        (rawText.startsWith("[") && rawText.endsWith("]"))) {
+      try {
+        parsed = JSON.parse(rawText);
+        // Tangani double-stringified JSON jika ada
+        if (typeof parsed === "string" && 
+            ((parsed.startsWith("{") && parsed.endsWith("}")) || 
+             (parsed.startsWith("[") && parsed.endsWith("]")))) {
+          try { parsed = JSON.parse(parsed); } catch (e) {}
+        }
+      } catch (e) {
+        parsed = null;
+      }
+    }
+  } else if (content !== undefined && content !== null) {
+    rawText = String(content).trim();
+  }
+
+  // Jika bukan JSON atau parsing gagal, periksa apakah sudah berformat XML atau teks biasa
+  if (parsed === null) {
+    if (rawText.startsWith("<") && rawText.endsWith(">")) {
+      return rawText;
+    }
+    const isErrorText = /^(error|fatal|fail|exception):/i.test(rawText);
+    const tag = isErrorText ? "error" : "output";
+    return `<${tag}>\n${rawText}\n</${tag}>`;
+  }
+
+  // Khusus MCP Tool Result: { content: [{ type: 'text', text: '...' }], isError: boolean }
+  if (parsed && typeof parsed === "object" && Array.isArray(parsed.content)) {
+    const isErr = parsed.isError === true;
+    let out = `  <status>${isErr ? "error" : "success"}</status>\n`;
+    for (const item of parsed.content) {
+      if (item && item.type === "text" && typeof item.text === "string") {
+        out += `  <content>\n${formatTextWithCodeTags(item.text)}\n  </content>\n`;
+      } else if (item && typeof item === "object") {
+        out += `  <content_block type="${escapeXmlAttr(item.type || "unknown")}">\n${jsonToXml(item, 2)}\n  </content_block>\n`;
+      }
+    }
+    return out.trim();
+  }
+
+  // Khusus Command Execution (stdout, stderr, exitCode/exit_code)
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && 
+      (parsed.stdout !== undefined || parsed.stderr !== undefined || parsed.exitCode !== undefined || parsed.exit_code !== undefined)) {
+    let out = "";
+    const exitCode = parsed.exitCode !== undefined ? parsed.exitCode : parsed.exit_code;
+    const isErr = (exitCode !== undefined && exitCode !== 0) || (parsed.stderr && !parsed.stdout);
+    out += `  <status>${isErr ? "error" : "success"}</status>\n`;
+    if (exitCode !== undefined) {
+      out += `  <exit_code>${exitCode}</exit_code>\n`;
+    }
+    if (parsed.stdout) {
+      out += `  <stdout>\n${formatTextWithCodeTags(parsed.stdout)}\n  </stdout>\n`;
+    }
+    if (parsed.stderr) {
+      out += `  <stderr>\n${formatTextWithCodeTags(parsed.stderr)}\n  </stderr>\n`;
+    }
+    for (const [k, v] of Object.entries(parsed)) {
+      if (["stdout", "stderr", "exitCode", "exit_code"].includes(k)) continue;
+      const valXml = jsonToXml({ [k]: v }, 1);
+      if (valXml) out += `${valXml}\n`;
+    }
+    return out.trim();
+  }
+
+  // Objek atau Array JSON umum: Ubah seluruh pohon ke XML semantik
+  return jsonToXml(parsed, 1).trim();
 }
 
 /**
@@ -990,6 +1173,13 @@ function formatMessagesToPrompt(messages, tools = []) {
     toolDirective += '<zerollm_tool_call name="nama_fungsi">{"parameter": "nilai"}</zerollm_tool_call>\n';
     toolDirective += "Contoh:\n";
     toolDirective += '<zerollm_tool_call name="get_current_weather">{"location": "Jakarta"}</zerollm_tool_call>\n\n';
+    toolDirective += "[HASIL PEMANGGILAN TOOL - XML FORMAT]:\n";
+    toolDirective += "Hasil eksekusi fungsi/tool dari sistem akan dikirimkan kembali dalam format XML terstruktur di dalam tag:\n";
+    toolDirective += '<zerollm_tool_result name="nama_fungsi" call_id="...">\n';
+    toolDirective += '  <status>success</status>\n';
+    toolDirective += '  <output>...</output>\n';
+    toolDirective += '</zerollm_tool_result>\n';
+    toolDirective += "Pahami dan evaluasi tag-tag XML di dalam hasil tool tersebut secara seksama.\n\n";
     toolDirective += "[EFISIENSI EKSEKUSI PERINTAH SHELL / LINUX]:\n";
     toolDirective += "Jika Anda menggunakan tool yang berhubungan dengan shell/terminal (seperti exec, bash, terminal, dll.):\n";
     toolDirective += "1. Mode Langsung (Chaining '&&'): Gabungkan perintah-perintah Linux yang berurutan atau saling berkaitan ke dalam satu perintah tunggal menggunakan operator '&&' (atau ';' / '|' jika relevan) untuk meminimalkan putaran giliran.\n";
@@ -1033,7 +1223,7 @@ function formatMessagesToPrompt(messages, tools = []) {
   }
   if (hasToolResultInHistory) {
     endGuidance += "2. Tahap 2 (Evaluasi Hasil Tool & Multi-Step Execution):\n";
-    endGuidance += "   - Evaluasi secara kritis apakah data di dalam <zerollm_tool_result> sudah cukup, valid, dan menjawab tuntas permintaan pengguna.\n";
+    endGuidance += "   - Evaluasi secara kritis apakah data XML di dalam <zerollm_tool_result> sudah cukup, valid, dan menjawab tuntas permintaan pengguna.\n";
     endGuidance += "   - JIKA data masih kurang lengkap, kosong, error, atau membutuhkan investigasi lanjutan (misal: membaca file lain, mencoba perintah alternatif, atau mencari informasi tambahan): Anda WAJIB MEMANGGIL TOOL BERIKUTNYA dengan tag:\n";
     endGuidance += '     <zerollm_tool_call name="nama_fungsi">{"parameter": "nilai"}</zerollm_tool_call>\n';
     endGuidance += "   - JIKA seluruh data sudah lengkap dan memuaskan: Berikan jawaban akhir secara mendalam, langsung, dan alami kepada pengguna tanpa tag tool apapun.\n";
@@ -1072,8 +1262,11 @@ function formatMessagesToPrompt(messages, tools = []) {
     const msg = convo[i];
     const text = stripInboundMeta(extractTextContent(msg.content));
     if (msg.role === "tool" || msg.role === "toolResult") {
-      const toolId = msg.name || msg.tool_call_id || "eksternal";
-      promptBuilder += `<zerollm_tool_result name="${toolId}">\n${text}\n</zerollm_tool_result>\n\n`;
+      const toolName = resolveToolName(convo, msg);
+      const callId = msg.tool_call_id || msg.id || "";
+      const idAttr = callId ? ` call_id="${escapeXmlAttr(callId)}"` : "";
+      const xmlBody = formatToolResultToXml(msg.content, toolName, callId);
+      promptBuilder += `<zerollm_tool_result name="${escapeXmlAttr(toolName)}"${idAttr}>\n${xmlBody}\n</zerollm_tool_result>\n\n`;
     } else if (msg.role === "assistant") {
       if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
         const callsStr = msg.tool_calls.map(tc => `<zerollm_tool_call name="${tc.function?.name || tc.name}">${tc.function?.arguments || JSON.stringify(tc.arguments || {})}</zerollm_tool_call>`).join("\n");
@@ -1089,8 +1282,11 @@ function formatMessagesToPrompt(messages, tools = []) {
   const lastMsg = convo[convo.length - 1];
   const lastText = stripInboundMeta(extractTextContent(lastMsg.content));
   if (lastMsg.role === "tool" || lastMsg.role === "toolResult") {
-    const toolId = lastMsg.name || lastMsg.tool_call_id || "eksternal";
-    promptBuilder += `<zerollm_tool_result name="${toolId}">\n${lastText}\n</zerollm_tool_result>\n\nEvaluasi hasil tool di atas: jika informasi sudah lengkap dan memuaskan, berikan jawaban akhir yang tuntas; jika belum memuaskan atau butuh langkah investigasi lanjutan, panggil tool berikutnya yang relevan menggunakan <zerollm_tool_call>.`;
+    const toolName = resolveToolName(convo, lastMsg);
+    const callId = lastMsg.tool_call_id || lastMsg.id || "";
+    const idAttr = callId ? ` call_id="${escapeXmlAttr(callId)}"` : "";
+    const xmlBody = formatToolResultToXml(lastMsg.content, toolName, callId);
+    promptBuilder += `<zerollm_tool_result name="${escapeXmlAttr(toolName)}"${idAttr}>\n${xmlBody}\n</zerollm_tool_result>\n\nEvaluasi hasil tool '${toolName}' di atas: jika informasi sudah lengkap dan memuaskan, berikan jawaban akhir yang tuntas; jika belum memuaskan atau butuh langkah investigasi lanjutan, panggil tool berikutnya yang relevan menggunakan <zerollm_tool_call>.`;
   } else {
     promptBuilder += `<zerollm_user>\n${lastText}\n</zerollm_user>`;
   }
