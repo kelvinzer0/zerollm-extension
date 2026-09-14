@@ -25,11 +25,12 @@ const resetPresetBtn = document.getElementById("resetPresetBtn");
 // Connection elements
 const cfgBridgeUrl = document.getElementById("cfgBridgeUrl");
 const cfgRoomId = document.getElementById("cfgRoomId");
-const dispApiKey = document.getElementById("dispApiKey");
+const cfgApiKey = document.getElementById("cfgApiKey");
 const dispBaseUrl = document.getElementById("dispBaseUrl");
 const newRoomBtn = document.getElementById("newRoomBtn");
 const reconnectBtn = document.getElementById("reconnectBtn");
 const copyKeyBtn = document.getElementById("copyKeyBtn");
+const copyRoomBtn = document.getElementById("copyRoomBtn");
 const copyUrlBtn = document.getElementById("copyUrlBtn");
 
 let currentModels = [];
@@ -126,13 +127,15 @@ function updateState(state) {
     cfgBridgeUrl.value = state.bridgeUrl;
     dispBaseUrl.textContent = `${state.bridgeUrl.replace(/\/+$/, "")}/v1`;
   }
-  if (state.roomId) cfgRoomId.value = state.roomId;
+  if (state.roomId) {
+    cfgRoomId.value = state.roomId;
+  }
   if (state.apiKey) {
     currentApiKey = state.apiKey;
-    dispApiKey.textContent = state.apiKey;
+    if (cfgApiKey) cfgApiKey.value = state.apiKey;
   } else {
     currentApiKey = "";
-    dispApiKey.textContent = "-";
+    if (cfgApiKey) cfgApiKey.value = "";
   }
 
   // Multi-Window Parallel Mode toggle state
@@ -245,6 +248,33 @@ resetPresetBtn.addEventListener("click", () => {
   }
 });
 
+// ── Smart Input Sync for API Key & Room ID ────────────────────────────
+if (cfgApiKey) {
+  cfgApiKey.addEventListener("input", (e) => {
+    const val = e.target.value.trim();
+    currentApiKey = val;
+    // Format: <token>_<roomId>
+    const lastUnderscore = val.lastIndexOf("_");
+    if (lastUnderscore > 0 && lastUnderscore < val.length - 1) {
+      const extractedRoom = val.substring(lastUnderscore + 1);
+      if (cfgRoomId) cfgRoomId.value = extractedRoom;
+    }
+  });
+}
+
+if (cfgRoomId) {
+  cfgRoomId.addEventListener("input", (e) => {
+    const val = e.target.value.trim();
+    // If user accidentally pasted the full API key into room field
+    const lastUnderscore = val.lastIndexOf("_");
+    if (lastUnderscore > 0 && lastUnderscore < val.length - 1) {
+      if (cfgApiKey) cfgApiKey.value = val;
+      currentApiKey = val;
+      cfgRoomId.value = val.substring(lastUnderscore + 1);
+    }
+  });
+}
+
 // ── New Room Creation ─────────────────────────────────────────────────
 newRoomBtn.addEventListener("click", async () => {
   const base = cfgBridgeUrl.value.trim().replace(/\/+$/, "");
@@ -252,21 +282,26 @@ newRoomBtn.addEventListener("click", async () => {
   newRoomBtn.disabled = true;
 
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
     const res = await fetch(`${base}/new`, {
-      headers: { "User-Agent": "Mozilla/5.0" }
+      headers: { "User-Agent": "ZeroLLM-Extension/1.34" },
+      signal: controller.signal
     });
+    clearTimeout(timeoutId);
+
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}: ${res.statusText}`);
     }
     const data = await res.json();
 
     if (!data.api_key) {
-      throw new Error("Bridge endpoint did not return an 'api_key'. If you are self-hosting, check your Nginx configuration: public-llm-bridge may be proxying to mcp-bridge instead of llm-bridge.");
+      throw new Error("Bridge endpoint did not return an 'api_key'. Check bridge deployment.");
     }
     
     cfgRoomId.value = data.room;
     currentApiKey = data.api_key;
-    dispApiKey.textContent = data.api_key;
+    if (cfgApiKey) cfgApiKey.value = data.api_key;
     dispBaseUrl.textContent = data.api_base_url || `${base}/v1`;
 
     chrome.runtime.sendMessage({
@@ -283,20 +318,42 @@ newRoomBtn.addEventListener("click", async () => {
   }
 });
 
-// ── Reconnect ─────────────────────────────────────────────────────────
+// ── Connect / Save ────────────────────────────────────────────────────
 reconnectBtn.addEventListener("click", () => {
   const base = cfgBridgeUrl.value.trim().replace(/\/+$/, "");
-  const room = cfgRoomId.value.trim();
+  let room = cfgRoomId.value.trim();
+  let key = cfgApiKey ? cfgApiKey.value.trim() : currentApiKey;
+
+  // If room is empty but key has room suffix
+  if (!room && key.includes("_")) {
+    room = key.split("_").pop().trim();
+    cfgRoomId.value = room;
+  }
+
+  if (!room) {
+    alert("Please enter a Room ID or create a new room.");
+    return;
+  }
+
+  currentApiKey = key;
+  const originalText = reconnectBtn.textContent;
+  reconnectBtn.textContent = "Connecting...";
+  
   chrome.runtime.sendMessage({
     type: "connect",
     url: base,
     room: room,
-    apiKey: currentApiKey
+    apiKey: key
   });
+
+  setTimeout(() => {
+    reconnectBtn.textContent = originalText;
+  }, 1000);
 });
 
 // ── Copy buttons ──────────────────────────────────────────────────────
 function copyToClipboard(text, btn) {
+  if (!text) return;
   navigator.clipboard.writeText(text).then(() => {
     const orig = btn.textContent;
     btn.textContent = "✅";
@@ -304,13 +361,24 @@ function copyToClipboard(text, btn) {
   });
 }
 
-copyKeyBtn.addEventListener("click", () => {
-  copyToClipboard(dispApiKey.textContent, copyKeyBtn);
-});
+if (copyKeyBtn) {
+  copyKeyBtn.addEventListener("click", () => {
+    const key = cfgApiKey ? cfgApiKey.value.trim() : currentApiKey;
+    copyToClipboard(key, copyKeyBtn);
+  });
+}
 
-copyUrlBtn.addEventListener("click", () => {
-  copyToClipboard(dispBaseUrl.textContent, copyUrlBtn);
-});
+if (copyRoomBtn) {
+  copyRoomBtn.addEventListener("click", () => {
+    copyToClipboard(cfgRoomId.value.trim(), copyRoomBtn);
+  });
+}
+
+if (copyUrlBtn) {
+  copyUrlBtn.addEventListener("click", () => {
+    copyToClipboard(dispBaseUrl.textContent.trim(), copyUrlBtn);
+  });
+}
 
 // ── Listeners ─────────────────────────────────────────────────────────
 chrome.runtime.sendMessage({ type: "getState" }, updateState);

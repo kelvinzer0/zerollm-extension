@@ -135,18 +135,26 @@ async function loadModels() {
   if (data.apiKey) apiKey = data.apiKey;
   if (data.executionMode) executionMode = data.executionMode;
 
-  // Auto-generate room and API key if missing or uninitialized
-  if (!apiKey || !roomId || roomId === "default") {
+  // Auto-generate room and API key only if room is completely missing or default
+  if (!roomId || roomId === "default" || roomId.trim() === "") {
     await ensureRoomAndKey();
   }
 }
 
 async function ensureRoomAndKey() {
+  // Never overwrite if user already configured a specific room
+  if (roomId && roomId !== "default" && roomId.trim() !== "") {
+    return true;
+  }
   const base = (bridgeUrl || "https://public-llm-bridge.warunglakku.com").replace(/\/+$/, "");
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
     const res = await fetch(`${base}/new`, {
-      headers: { "User-Agent": "Mozilla/5.0" }
+      headers: { "User-Agent": "ZeroLLM-Extension/1.34" },
+      signal: controller.signal
     });
+    clearTimeout(timeoutId);
     if (res.ok) {
       const data = await res.json();
       if (data.room && data.api_key) {
@@ -158,7 +166,7 @@ async function ensureRoomAndKey() {
       }
     }
   } catch (err) {
-    console.error("[ZeroLLM] Failed to auto-generate room and API key:", err);
+    console.warn("[ZeroLLM] Auto-registration /new failed or timed out:", err.message);
   }
   return false;
 }
@@ -443,6 +451,20 @@ async function navigateToHomeAreaIfNeeded(tabId, modelConfig) {
     const tab = await chrome.tabs.get(tabId).catch(() => null);
     if (!tab || !tab.url) return;
 
+    // 1. Cek apakah tab yang ada sudah memiliki input chat yang aktif dan siap dipakai!
+    //    Jika input box sudah siap, JANGAN RELOAD / JANGAN RESET! Ini membuat regenerasi dan follow-up instan & anti-mogok!
+    try {
+      const readyCheck = await chrome.tabs.sendMessage(tabId, {
+        type: "checkInputReady",
+        modelConfig
+      }).catch(() => null);
+
+      if (readyCheck?.ready) {
+        console.log(`[ZeroLLM Navigation] Tab #${tabId} sudah memiliki input chat yang aktif. Melewati navigasi/reload.`);
+        return;
+      }
+    } catch (e) {}
+
     const currentUrl = tab.url;
     let homeUrl = modelConfig.newChatUrl || modelConfig.defaultUrl;
     if (!homeUrl && modelConfig.urlPattern) {
@@ -457,18 +479,11 @@ async function navigateToHomeAreaIfNeeded(tabId, modelConfig) {
     const normCurrent = currentUrl.replace(/\/+$/, "");
     const normHome = homeUrl.replace(/\/+$/, "");
 
-    // Jika tab sudah berada di Home Area, tidak perlu navigasi ulang
     if (normCurrent === normHome) {
       return;
     }
 
-    // Deteksi sub-path thread / percakapan lama:
-    // - Xiaomi MiMo: /#/chat/005911d30ed78fcc...
-    // - ChatGPT: /c/6aa56251...
-    // - Claude: /chat/985ae002...
-    // - DeepSeek: /a/chat/s/1e432207...
-    // - Qwen: /c/a46e1f3a...
-    // - ChatSmith: /conversation/c9491388...
+    // Deteksi sub-path thread / percakapan lama jika input box belum ada di DOM
     const isOldThread = 
       /\/#\/chat\/[a-zA-Z0-9_-]+/i.test(currentUrl) ||
       /\/c\/[a-zA-Z0-9_-]+/i.test(currentUrl) ||
@@ -478,7 +493,7 @@ async function navigateToHomeAreaIfNeeded(tabId, modelConfig) {
       /\/s\/[a-zA-Z0-9_-]+/i.test(currentUrl);
 
     if (isOldThread) {
-      console.log(`[ZeroLLM Navigation] Tab #${tabId} terdeteksi di percakapan lama (${currentUrl}). Melakukan Soft-Reset instan...`);
+      console.log(`[ZeroLLM Navigation] Input belum siap pada tab #${tabId} (${currentUrl}). Melakukan Soft-Reset instan...`);
       
       // 1. Coba SPA Soft-Reset instan via content script (100ms, tanpa reload browser)
       try {
@@ -488,16 +503,14 @@ async function navigateToHomeAreaIfNeeded(tabId, modelConfig) {
         }).catch(() => null);
 
         if (softRes?.success) {
-          console.log(`[ZeroLLM Navigation] Soft-Reset instan berhasil (${softRes.method})! Melewatkan hard reload.`);
+          console.log(`[ZeroLLM Navigation] Soft-Reset instan berhasil (${softRes.method})!`);
           await new Promise(r => setTimeout(r, 250));
           return;
         }
-      } catch (softErr) {
-        console.debug("[ZeroLLM Navigation] Soft-Reset gagal, melanjutkan ke hard reload:", softErr);
-      }
+      } catch (softErr) {}
 
       // 2. Fallback: Hard reload jika soft-reset tidak berhasil
-      console.log(`[ZeroLLM Navigation] Soft-Reset tidak tersedia, fallback ke navigasi normal: ${homeUrl}...`);
+      console.log(`[ZeroLLM Navigation] Fallback navigasi ke: ${homeUrl}...`);
       await chrome.tabs.update(tabId, { url: homeUrl });
       await waitForTabComplete(tabId, 15000);
       await new Promise(r => setTimeout(r, 800));
@@ -523,8 +536,34 @@ async function ensureContentScript(tabId) {
 //  WEBSOCKET BRIDGE CONNECTION & ACTIVE KEEPALIVE
 // ============================================================
 
+let reconnectAttempts = 0;
+
 function connectBridge(url, room, key) {
+  clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+
+  if (!url || !room || room === "default") {
+    console.warn("[ZeroLLM] connectBridge: url or roomId is invalid", { url, room });
+    return;
+  }
+
+  // Jika sudah terhubung atau sedang dalam proses koneksi ke room dan url yang sama, jangan abort!
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) && bridgeUrl === url && roomId === room) {
+    console.log(`[ZeroLLM] Already connected/connecting to ${bridgeUrl} (room: ${roomId}).`);
+    if (ws.readyState === WebSocket.OPEN) {
+      syncModelsToBridge();
+      connectionState = "connected";
+    }
+    broadcastState();
+    return;
+  }
+
   if (ws) {
+    // Lepas semua listener lama agar tidak memicu onclose palsu atau loop reconnect
+    ws.onopen = null;
+    ws.onmessage = null;
+    ws.onerror = null;
+    ws.onclose = null;
     try { ws.close(); } catch (e) {}
     ws = null;
   }
@@ -545,21 +584,28 @@ function connectBridge(url, room, key) {
     ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
+      console.log(`[ZeroLLM] WebSocket connected to ${url} (room: ${room})`);
       connectionState = "connected";
+      reconnectAttempts = 0;
       broadcastState();
       clearTimeout(reconnectTimer);
-      chrome.storage.local.set({ bridgeUrl: url, roomId: room, apiKey });
+      reconnectTimer = null;
+      chrome.storage.local.set({ bridgeUrl: url, roomId: room, apiKey: apiKey || key });
 
-      // Sinkronisasi model ke Cloudflare Worker
+      // Sinkronisasi model ke Bridge seketika saat open
       syncModelsToBridge();
 
-      // Mulai heartbeat keepalive aktif setiap 5 detik agar Service Worker MV3 tidak pernah dihentikan Chrome
+      // Mulai heartbeat keepalive aktif setiap 5 detik
       clearInterval(pingInterval);
+      let pingCounter = 0;
       pingInterval = setInterval(() => {
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "pong" }));
-          // Touching Chrome API resets the MV3 30-second service worker idle timer
-          try { chrome.runtime.getPlatformInfo(() => {}); } catch (e) {}
+          pingCounter++;
+          // Sinkronisasi ulang daftar model setiap 30 detik (6 kali ping) untuk menjamin bridge selalu memiliki daftar model
+          if (pingCounter % 6 === 0) {
+            syncModelsToBridge();
+          }
         }
       }, 5000);
     };
@@ -573,29 +619,43 @@ function connectBridge(url, room, key) {
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
+      console.warn(`[ZeroLLM] WebSocket closed (code: ${event.code}). Scheduling reconnect...`);
       connectionState = "disconnected";
       broadcastState();
       clearInterval(pingInterval);
       ws = null;
+      clearTimeout(reconnectTimer);
+      const delay = Math.min(1000 * Math.pow(1.5, reconnectAttempts++), 5000);
       reconnectTimer = setTimeout(() => {
         if (bridgeUrl && roomId) connectBridge(bridgeUrl, roomId, apiKey);
-      }, 1000);
+      }, delay);
     };
 
     ws.onerror = (err) => {
       console.error("[ZeroLLM] WebSocket error:", err);
     };
   } catch (err) {
+    console.error("[ZeroLLM] connectBridge exception:", err);
     connectionState = "disconnected";
     broadcastState();
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(() => {
+      if (bridgeUrl && roomId) connectBridge(bridgeUrl, roomId, apiKey);
+    }, 2000);
   }
 }
 
 function disconnectBridge() {
   clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+  reconnectAttempts = 0;
   clearInterval(pingInterval);
   if (ws) {
+    ws.onopen = null;
+    ws.onmessage = null;
+    ws.onerror = null;
+    ws.onclose = null;
     try { ws.close(); } catch (e) {}
     ws = null;
   }
@@ -611,19 +671,29 @@ function sendToBridge(data) {
 
 function syncModelsToBridge() {
   const sourceModels = (models && models.length > 0) ? models : DEFAULT_PRESETS;
-  const activeModels = sourceModels
+  let activeModels = sourceModels
     .filter(m => m.enabled !== false)
     .map(m => ({
       id: m.id,
       name: m.name || m.id,
       owned_by: "zerollm-extension",
-      description: m.description || `Web AI model for ${m.urlPattern}`
+      description: m.description || `Web AI model for ${m.urlPattern || m.id}`
     }));
+
+  if (activeModels.length === 0) {
+    activeModels = DEFAULT_PRESETS.map(m => ({
+      id: m.id,
+      name: m.name || m.id,
+      owned_by: "zerollm-extension",
+      description: m.description || `Web AI model for ${m.urlPattern || m.id}`
+    }));
+  }
 
   sendToBridge({
     type: "registerModels",
     models: activeModels
   });
+  console.log(`[ZeroLLM] Synced ${activeModels.length} models to bridge (room: ${roomId})`);
 }
 
 // ============================================================
@@ -1348,9 +1418,9 @@ async function nativeTypeAndSend(tabId, text, modelConfig) {
       query: text  // Kirim teks langsung agar content.js ketik via enterPrompt
     }).catch(() => null);
 
-    // Jika content.js sudah mengetik langsung (directTyped), skip CDP sepenuhnya
-    if (focusRes?.directTyped) {
-      console.log(`[ZeroLLM CDP] Text typed directly by content.js enterPrompt (bypassed CDP) on tab #${tabId}`);
+    // Jika content.js sudah mengetik langsung DAN submit berhasil diklik, skip CDP
+    if (focusRes?.directTyped && focusRes?.submitted) {
+      console.log(`[ZeroLLM CDP] Text typed and submitted directly by content.js on tab #${tabId}`);
       return {
         success: true,
         initialCount: focusRes?.initialCount || 0,
@@ -1423,6 +1493,12 @@ async function nativeTypeAndSend(tabId, text, modelConfig) {
 async function handleBridgeMessage(msg) {
   if (msg.type === "ping") {
     sendToBridge({ type: "pong" });
+    return;
+  }
+
+  if (msg.type === "requestModels") {
+    console.log("[ZeroLLM] Bridge requested model sync, sending active models...");
+    syncModelsToBridge();
     return;
   }
 
@@ -1950,10 +2026,38 @@ chrome.windows.onRemoved.addListener((windowId) => {
   }
 });
 
-// Auto-start on load & Auto-attach tabs
-loadModels().then(async () => {
-  await autoAttachExistingTabs();
-  if (bridgeUrl && roomId) {
-    connectBridge(bridgeUrl, roomId, apiKey);
+// MV3 Service Worker Keep-Alive Port Listener
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name === "zerollm-keepalive") {
+    port.onDisconnect.addListener(() => {});
   }
 });
+
+// MV3 Alarm-Based Periodic Health Check & Self-Healing Reconnect
+try {
+  chrome.alarms.create("zerollm-keepalive-alarm", { periodInMinutes: 0.5 });
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === "zerollm-keepalive-alarm") {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        if (bridgeUrl && roomId && roomId !== "default") {
+          console.log(`[ZeroLLM Alarm] Bridge disconnected. Auto-reconnecting to ${bridgeUrl} (room: ${roomId})...`);
+          connectBridge(bridgeUrl, roomId, apiKey);
+        }
+      } else {
+        // Socket open: kirim pong dan sinkronisasi model berkala
+        try { ws.send(JSON.stringify({ type: "pong" })); } catch (e) {}
+        syncModelsToBridge();
+      }
+    }
+  });
+} catch (e) {}
+
+// Auto-start on load & Auto-attach tabs
+loadModels().then(async () => {
+  if (bridgeUrl && roomId && roomId !== "default") {
+    connectBridge(bridgeUrl, roomId, apiKey);
+  }
+  // Pasang tab yang sudah terbuka di background tanpa menunda koneksi WebSocket bridge
+  autoAttachExistingTabs().catch(() => {});
+});
+

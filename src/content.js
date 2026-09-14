@@ -493,49 +493,57 @@ async function enterPrompt(inputEl, text, modelConfig = null) {
   }
 
   // Trigger Send Button click with full pointer/mouse/click dispatch
-  triggerSendOrEnter(modelConfig, inputEl);
+  const submitted = await triggerSendOrEnter(modelConfig, inputEl);
+  return submitted;
 }
 
 /**
  * Trigger Send Button click or Keyboard Enter on input box
  */
-function triggerSendOrEnter(modelConfig) {
-  // 1. Cari submit button dengan selector paling lengkap
-  let submitBtn = null;
-  if (modelConfig?.doneSelector) {
-    submitBtn = findElementByPattern(modelConfig.doneSelector);
-  }
-  if (!submitBtn) {
-    submitBtn = document.querySelector(
-      "button[data-testid='send-button']:not([disabled]), " +
-      "button[data-testid='fruitjuice-send-button']:not([disabled]), " +
-      "button.wm-composer-submitButton:not([disabled]), " +
-      "button[aria-label*='Kirim']:not([disabled]), " +
-      "button[aria-label*='Send']:not([disabled]), " +
-      "form button[type='submit']:not([disabled]), " +
-      ".send-button:not([disabled])"
-    );
-  }
+async function triggerSendOrEnter(modelConfig, inputEl = null) {
+  // 1. Cari submit button dengan retry hingga 900ms (menunggu React/Vue mengaktifkan tombol setelah event input)
+  for (let attempt = 0; attempt < 6; attempt++) {
+    let submitBtn = null;
+    if (modelConfig?.doneSelector) {
+      submitBtn = findElementByPattern(modelConfig.doneSelector);
+    }
+    if (!submitBtn) {
+      submitBtn = document.querySelector(
+        "button[data-testid='send-button']:not([disabled]), " +
+        "button[data-testid='fruitjuice-send-button']:not([disabled]), " +
+        "button.wm-composer-submitButton:not([disabled]), " +
+        "button[aria-label*='Kirim' i]:not([disabled]), " +
+        "button[aria-label*='Send' i]:not([disabled]), " +
+        "button[aria-label*='Submit' i]:not([disabled]), " +
+        "button[data-testid*='send' i]:not([disabled]), " +
+        "button.ds-icon-button:not([disabled]), " +
+        "button.ant-btn-primary:not([disabled]), " +
+        "form button[type='submit']:not([disabled]), " +
+        ".send-button:not([disabled])"
+      );
+    }
 
-  if (submitBtn && !submitBtn.disabled && submitBtn.getAttribute("aria-disabled") !== "true") {
-    // Multi-event mouse dispatch agar React dan pointer capture mendeteksi klik asli
-    ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(type => {
-      submitBtn.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
-    });
-    try { submitBtn.click(); } catch(e) {}
-    console.log("[ZeroLLM ContentScript] Clicked submit button successfully");
-    return true;
+    if (submitBtn && !submitBtn.disabled && submitBtn.getAttribute("aria-disabled") !== "true") {
+      ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(type => {
+        submitBtn.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+      });
+      try { submitBtn.click(); } catch(e) {}
+      console.log(`[ZeroLLM ContentScript] Clicked submit button successfully on attempt ${attempt + 1}`);
+      return true;
+    }
+    await new Promise(r => setTimeout(r, 150));
   }
 
   // 2. Jika tombol send tidak terdeteksi atau disabled: picu Enter keyboard event langsung ke input/textarea
-  let inputEl = findElementByPattern(modelConfig?.continueChatSelector) || 
-                findElementByPattern(modelConfig?.startChatSelector) ||
-                document.querySelector("#prompt-textarea, textarea, [contenteditable='true']");
+  let targetInput = inputEl || 
+                    findElementByPattern(modelConfig?.continueChatSelector) || 
+                    findElementByPattern(modelConfig?.startChatSelector) ||
+                    document.querySelector("#prompt-textarea, textarea, [contenteditable='true']");
 
-  if (inputEl) {
-    inputEl.focus();
+  if (targetInput) {
+    targetInput.focus();
     ["keydown", "keypress", "keyup"].forEach(type => {
-      inputEl.dispatchEvent(new KeyboardEvent(type, {
+      targetInput.dispatchEvent(new KeyboardEvent(type, {
         key: "Enter",
         code: "Enter",
         keyCode: 13,
@@ -895,3 +903,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 });
+
+// Keep-Alive connection to background service worker to prevent MV3 hibernation
+let keepAlivePort = null;
+function setupKeepAlivePort() {
+  try {
+    keepAlivePort = chrome.runtime.connect({ name: "zerollm-keepalive" });
+    keepAlivePort.onDisconnect.addListener(() => {
+      keepAlivePort = null;
+      setTimeout(setupKeepAlivePort, 2000);
+    });
+  } catch (e) {}
+}
+setupKeepAlivePort();
+

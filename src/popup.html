@@ -399,18 +399,21 @@
   <section id="tab-connection" class="tab-content">
     <div class="card">
       <div class="form-group">
-        <label>Cloudflare Bridge URL</label>
+        <label>Bridge URL (Go / Cloudflare)</label>
         <input type="text" id="cfgBridgeUrl" value="https://public-llm-bridge.warunglakku.com">
       </div>
       <div class="form-group">
-        <label>Room ID</label>
-        <input type="text" id="cfgRoomId" placeholder="e.g. 868ff0aa">
+        <label>API Key (Bearer Token)</label>
+        <div style="display: flex; gap: 6px;">
+          <input type="text" id="cfgApiKey" placeholder="Paste full API Key (token_room) or generate" style="flex: 1;">
+          <button class="btn btn-secondary" id="copyKeyBtn" title="Copy API Key" style="padding: 0 10px;">📋</button>
+        </div>
       </div>
       <div class="form-group">
-        <label>API Key</label>
-        <div class="copy-box">
-          <span id="dispApiKey">-</span>
-          <button class="copy-btn" id="copyKeyBtn" title="Copy API Key">📋</button>
+        <label>Room ID</label>
+        <div style="display: flex; gap: 6px;">
+          <input type="text" id="cfgRoomId" placeholder="e.g. 868ff0aa" style="flex: 1;">
+          <button class="btn btn-secondary" id="copyRoomBtn" title="Copy Room ID" style="padding: 0 10px;">📋</button>
         </div>
       </div>
       <div class="form-group">
@@ -422,8 +425,8 @@
       </div>
 
       <div class="btn-group">
-        <button class="btn btn-primary" id="newRoomBtn">🚀 Create New Room</button>
-        <button class="btn btn-secondary" id="reconnectBtn">⚡ Reconnect</button>
+        <button class="btn btn-primary" id="reconnectBtn">⚡ Connect / Save</button>
+        <button class="btn btn-secondary" id="newRoomBtn">🚀 Create New Room</button>
       </div>
     </div>
   </section>
