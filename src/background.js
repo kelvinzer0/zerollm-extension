@@ -1953,7 +1953,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (active) {
         active.reject(new Error(msg.error));
       }
-      break;
+      return false;
     }
 
     case "getState":
@@ -1965,14 +1965,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         models,
         executionMode
       });
-      break;
+      return false;
 
     case "setExecutionMode":
       executionMode = msg.mode;
       chrome.storage.local.set({ executionMode });
       broadcastState();
       sendResponse({ success: true, executionMode });
-      break;
+      return false;
 
     case "connect":
       bridgeUrl = msg.url;
@@ -1985,17 +1985,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (msg.hardRefresh) {
         hardRefreshModelTabs();
       }
-      break;
+      sendResponse({ success: true, connectionState });
+      return false;
 
     case "hardRefreshTabs":
       hardRefreshModelTabs().then(() => {
-        sendResponse({ success: true });
+        try { sendResponse({ success: true }); } catch (_) {}
       });
       return true;
 
     case "disconnect":
       disconnectBridge();
-      break;
+      sendResponse({ success: true });
+      return false;
 
     case "saveModels":
       models = msg.models;
@@ -2003,9 +2005,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       syncModelsToBridge();
       broadcastState();
       sendResponse({ success: true });
-      break;
+      return false;
+
+    default:
+      return false;
   }
-  return true;
 });
 
 async function hardRefreshModelTabs() {

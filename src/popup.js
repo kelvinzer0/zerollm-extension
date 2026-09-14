@@ -162,7 +162,7 @@ if (parallelToggle) {
     chrome.runtime.sendMessage({
       type: "setExecutionMode",
       mode
-    });
+    }).catch(() => {});
     if (modeBadge) {
       modeBadge.textContent = e.target.checked ? "Parallel" : "Queue";
       modeBadge.style.color = e.target.checked ? "#10b981" : "#3b82f6";
@@ -180,7 +180,7 @@ function saveModelsToBackground(newModels) {
   chrome.runtime.sendMessage({
     type: "saveModels",
     models: newModels
-  });
+  }).catch(() => {});
 }
 
 // ── Save/Create Model Handler ──────────────────────────────────────────
@@ -310,7 +310,7 @@ newRoomBtn.addEventListener("click", async () => {
       url: base,
       room: data.room,
       apiKey: data.api_key
-    });
+    }).catch(() => {});
   } catch (err) {
     alert(`Failed to create room: ${err.message}`);
   } finally {
@@ -346,7 +346,7 @@ reconnectBtn.addEventListener("click", () => {
     room: room,
     apiKey: key,
     hardRefresh: true
-  });
+  }).catch(() => {});
 
   setTimeout(() => {
     reconnectBtn.textContent = originalText;
@@ -359,6 +359,7 @@ if (hardRefreshBtn) {
     const orig = hardRefreshBtn.textContent;
     hardRefreshBtn.textContent = "Refreshing...";
     chrome.runtime.sendMessage({ type: "hardRefreshTabs" }, () => {
+      const _ = chrome.runtime.lastError;
       hardRefreshBtn.textContent = "✅ Refreshed";
       setTimeout(() => {
         hardRefreshBtn.textContent = orig;
@@ -397,7 +398,10 @@ if (copyUrlBtn) {
 }
 
 // ── Listeners ─────────────────────────────────────────────────────────
-chrome.runtime.sendMessage({ type: "getState" }, updateState);
+chrome.runtime.sendMessage({ type: "getState" }, (state) => {
+  const _ = chrome.runtime.lastError;
+  if (state) updateState(state);
+});
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "stateUpdate") {
