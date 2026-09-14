@@ -63,8 +63,30 @@ function cleanHtmlToMarkdown(elementOrHtml) {
       case "ul": return `\n\n${inner.trim()}\n\n`;
       case "ol": return `\n\n${inner.trim()}\n\n`;
       case "li": return `* ${inner.trim()}\n`;
-      case "a": return `[${inner.trim()}](${node.getAttribute("href") || "#"})`;
       case "hr": return "\n\n---\n\n";
+      case "a": {
+        let text = inner.trim();
+        let href = (node.getAttribute ? (node.getAttribute("href") || "") : "").trim();
+
+        // Bersihkan bocoran penutup tag HTML atau kutip akibat autolinker AI web (contoh: "> atau ")
+        text = text.replace(/["'>\s\\]+$/, "");
+        href = href.replace(/["'>\s\\]+$/, "");
+
+        // Jika berada di dalam blok kode/pre/tool call, JANGAN ubah ke markdown link [text](href)
+        const isInsideCode = Boolean(node.closest && node.closest("pre, code, [class*='code'], [data-language], zerollm_code, zerollm_tool_call"));
+        if (isInsideCode) {
+          return text || href;
+        }
+
+        // Jika teks adalah autolink URL (teks sama dengan href atau keduanya URL), kembalikan URL bersih tanpa [url](url)
+        if (/^https?:\/\//i.test(text) && (!href || href === "#" || text === href || href.startsWith(text) || text.startsWith(href))) {
+          return text;
+        }
+
+        if (!text) return href;
+        if (!href || href === "#") return text;
+        return `[${text}](${href})`;
+      }
       default: return inner;
     }
   }
@@ -411,6 +433,11 @@ function cleanResultMarkdown(markdown) {
     .replace(/Response\s*2.*$/gims, "")
     // Hapus footer citation / source disclaimer ("Citation sources (0)")
     .replace(/(?:\n+|^)(?:Citation sources\s*(?:\(\d+\))?|Sources\s*(?:\(\d+\))?|Referensi\s*(?:\(\d+\))?)[^\n]*$/gim, "")
+    // Normalisasi autolinked URLs [https://...](https://...) menjadi URL bersih https://...
+    // serta bersihkan bocoran tag HTML/kutip seperti [https://.../foo.js">](https://.../foo.js">)
+    .replace(/\[\s*(https?:\/\/[^\s\]]+?)(?:["'\s>]+)?\s*\]\(\s*https?:\/\/[^\s\)]+?\s*\)/gi, (match, url) => {
+      return url.replace(/["'>\s\\]+$/, "");
+    })
     .replace(/\n{3,}/g, "\n\n");
   return cleaned.trim();
 }

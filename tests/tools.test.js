@@ -26,6 +26,16 @@ test("safeParseJsonArgs correctly parses unescaped HTML/code in content field", 
   assert.ok(parsed.content.includes('<h1>Chess Game</h1>'));
 });
 
+test("safeParseJsonArgs normalizes autolinked URLs to clean URLs", () => {
+  const userCase = '{"url":"[https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js\\">](https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js\\">)"}';
+  const parsed = JSON.parse(safeParseJsonArgs(userCase, "test"));
+  assert.equal(parsed.url, "https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js");
+
+  const htmlCase = '{"filePath":"index.html","content":"<script src=\\"[https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js](https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js)\\">"}';
+  const parsedHtml = JSON.parse(safeParseJsonArgs(htmlCase, "write"));
+  assert.equal(parsedHtml.content, '<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js">');
+});
+
 test("parseToolCalls detects zerollm_tool_call tag", () => {
   const text = 'Here is the weather: <zerollm_tool_call name="get_weather">{"city": "Jakarta"}</zerollm_tool_call>';
   const calls = parseToolCalls(text);

@@ -25,6 +25,11 @@ export function safeParseJsonArgs(argsStr, fnName) {
   // Hapus sisa tag markdown code block ```lang jika ada
   argsStr = argsStr.replace(/^```[a-zA-Z0-9_-]*\s*\n?([\s\S]*?)\n?```$/g, "$1").trim();
 
+  // Sanitasi autolinked markdown link [https://...](https://...) menjadi URL murni https://...
+  argsStr = argsStr.replace(/\[\s*(https?:\/\/[^\s\]]+?)(?:["'\s>]+)?\s*\]\(\s*https?:\/\/[^\s\)]+?\s*\)/gi, (match, url) => {
+    return url.replace(/["'>\s\\]+$/, "");
+  });
+
   // 1. Dukungan XML parameter di dalam tag tool: <parameter name="filePath">...</parameter>
   if (argsStr.includes("<parameter")) {
     const paramRegex = /<parameter(?:=|\s+name=)["\x27]?([\w_-]+)["\x27]?[^>]*>([\s\S]*?)(?:<\/parameter>|(?=<parameter|$))/gi;
