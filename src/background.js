@@ -642,18 +642,22 @@ function safeParseJsonArgs(argsStr, fnName) {
   if (!argsStr || typeof argsStr !== "string") return "{}";
   argsStr = argsStr.trim();
 
-  // 0. Ekstraksi dan sanitasi tag <zerollm_code> di dalam argumen tool
-  const pureCodeMatch = argsStr.match(/^<zerollm_code[^>]*>([\s\S]*?)<\/zerollm_code>$/i);
-  if (pureCodeMatch) {
-    argsStr = pureCodeMatch[1].trim();
-  } else {
-    // Normalisasi unquoted <zerollm_code> di dalam properti JSON
-    argsStr = argsStr.replace(/:\s*<zerollm_code[^>]*>([\s\S]*?)<\/zerollm_code>/gi, (m, codeContent) => {
-      return ": " + JSON.stringify(codeContent.trim());
-    });
-    // Bersihkan tag pembungkus <zerollm_code> dari nilai teks tapi pertahankan isi kodenya
-    argsStr = argsStr.replace(/<zerollm_code[^>]*>([\s\S]*?)<\/zerollm_code>/gi, "$1");
-  }
+  // 0. Sanitasi komprehensif tag <zerollm_code> dan pembungkus di dalam argumen
+  // Hapus tag pembuka <zerollm_code...> jika berada di awal string (baik tertutup maupun unclosed)
+  argsStr = argsStr.replace(/^<zerollm_code[^>]*>/i, "").trim();
+  // Hapus tag penutup jika tersisa di akhir
+  argsStr = argsStr.replace(/<\/(?:zerollm_code|zerollm_tool_call|action|call)>$/i, "").trim();
+
+  // Normalisasi jika tag <zerollm_code> membungkus nilai properti JSON: {"command": <zerollm_code>...}
+  argsStr = argsStr.replace(/:\s*<zerollm_code[^>]*>([\s\S]*?)(?:<\/zerollm_code>|$)/gi, (m, codeContent) => {
+    return ": " + JSON.stringify(codeContent.trim());
+  });
+
+  // Hapus sisa tag pembuka dan penutup <zerollm_code> di mana pun dalam string
+  argsStr = argsStr.replace(/<zerollm_code[^>]*>/gi, "").replace(/<\/zerollm_code>/gi, "").trim();
+
+  // Hapus sisa tag markdown code block ```lang jika ada
+  argsStr = argsStr.replace(/^```[a-zA-Z0-9_-]*\s*\n?([\s\S]*?)\n?```$/g, "$1").trim();
 
   // 1. Coba parse langsung jika sudah valid JSON
   try {
@@ -681,11 +685,9 @@ function safeParseJsonArgs(argsStr, fnName) {
     } catch(e) {}
 
     // Ekstraksi heuristik properti:
-    // Contoh: {"command":"curl ... -H "Content-Type: application/json" ...","timeoutSeconds":15}
     const result = {};
     let working = argsStr.slice(1, -1).trim();
 
-    // Ambil properti trailing (misal: "timeoutSeconds": 15, "background": true, dsb)
     const trailingPropRegex = /,\s*"([a-zA-Z0-9_]+)"\s*:\s*([0-9.]+|true|false|null|"[^"]*")\s*$/;
     let propMatch;
     while ((propMatch = trailingPropRegex.exec(working)) !== null) {
@@ -696,29 +698,26 @@ function safeParseJsonArgs(argsStr, fnName) {
       working = working.slice(0, propMatch.index).trim();
     }
 
-    // Properti pertama (biasanya "command", "input", "query", dsb)
     const firstPropMatch = working.match(/^"([a-zA-Z0-9_]+)"\s*:\s*"?([\s\S]*)/);
     if (firstPropMatch) {
       const k = firstPropMatch[1];
       let v = firstPropMatch[2];
       if (v.endsWith('"')) v = v.slice(0, -1);
-      // Ganti raw newlines menjadi spasi tunggal agar valid JSON dan tidak merusak shell syntax
-      v = v.replace(/[\r\n]+/g, " ").trim();
-      result[k] = v;
+      result[k] = v.trim();
       return JSON.stringify(result);
     }
   }
 
-  // 4. Jika bukan objek JSON sama sekali tapi teks perintah mentah
+  // 4. Jika bukan objek JSON sama sekali tapi teks perintah mentah / skrip kode
   if (!argsStr.startsWith("{")) {
     const defaultKey = (fnName === "exec" || fnName === "bash") ? "command"
                      : (fnName === "read" || fnName === "edit" || fnName === "write") ? "path"
                      : "input";
-    return JSON.stringify({ [defaultKey]: argsStr.replace(/[\r\n]+/g, " ").trim() });
+    return JSON.stringify({ [defaultKey]: argsStr.trim() });
   }
 
   // 5. Fallback terakhir: bungkus raw text sebagai input JSON valid
-  return JSON.stringify({ input: argsStr.replace(/[\r\n]+/g, " ").trim() });
+  return JSON.stringify({ input: argsStr.trim() });
 }
 
 /**
@@ -731,10 +730,14 @@ function parseToolCalls(text) {
   const calls = [];
 
   // Pola 1 (Utama ZeroLLM): <zerollm_tool_call name="...">...</zerollm_tool_call> atau <zerollm_call name="...">
-  const tagRegex = /<(?:zerollm_tool_call|zerollm_call|zerollm:call|action|call)[^>]*?\s+name=["\x27]([\w_-]+)["\x27][^>]*>([\s\S]*?)<\/(?:zerollm_tool_call|zerollm_call|zerollm:call|action|call)>/gi;
+  // Mendukung juga jika model membuka dengan <zerollm_code lang="..."> dan menutup dengan </zerollm_tool_call>
+  const tagRegex = /<(?:zerollm_tool_call|zerollm_call|zerollm:call|action|call|zerollm_code)[^>]*?(?:name|lang)=["\x27]?([\w_-]+)["\x27]?[^>]*>([\s\S]*?)<\/(?:zerollm_tool_call|zerollm_call|zerollm:call|action|call)>/gi;
   let match;
   while ((match = tagRegex.exec(text)) !== null) {
-    const fnName = match[1];
+    let fnName = match[1];
+    if (fnName === "sh" || fnName === "shell" || fnName === "zsh") {
+      fnName = "bash";
+    }
     const argsStr = safeParseJsonArgs(match[2], fnName);
     calls.push({
       id: "call_" + Math.random().toString(36).substring(2, 10),
@@ -1716,22 +1719,106 @@ async function processGlobalQueue() {
 }
 
 // ============================================================
+//  STREAM BUFFERING & TAG SUPPRESSION
+// ============================================================
+const streamBuffers = new Map();
+
+/**
+ * Memproses stream delta dengan buffering cerdas untuk tag <zerollm* dan pemanggilan tool.
+ * Jika teks sedang menulis tag pembuka <zerollm* atau tag tool eksternal yang belum selesai (belum ada </zerollm*>),
+ * tahan (buffer) potongan tersebut dan JANGAN distreaming ke klien sampai tag penutupnya tiba.
+ * Jika setelah ditutup ternyata berupa tool call, jangan pernah distreaming sebagai teks biasa.
+ */
+function processStreamDelta(requestId, deltaContent) {
+  if (!deltaContent || typeof deltaContent !== "string") return null;
+
+  let buffer = (streamBuffers.get(requestId) || "") + deltaContent;
+  let outToStream = "";
+
+  while (buffer.length > 0) {
+    const tagMatch = buffer.match(/<(?:zerollm[_\w:]*|tool_call|action|call|function|invoke)\b/i);
+
+    if (!tagMatch) {
+      // Periksa apakah di ujung akhir string ada potongan tag yang belum lengkap, misal: "<", "<z", "<zerollm"
+      const partialTagMatch = buffer.match(/<[a-zA-Z0-9_:*-]*$/);
+      if (partialTagMatch && "<zerollm".startsWith(partialTagMatch[0].toLowerCase())) {
+        const safeText = buffer.slice(0, partialTagMatch.index);
+        outToStream += safeText;
+        buffer = buffer.slice(partialTagMatch.index);
+        break;
+      } else {
+        outToStream += buffer;
+        buffer = "";
+        break;
+      }
+    }
+
+    const tagStartIndex = tagMatch.index;
+
+    // Teks sebelum tag pembuka aman untuk langsung dialirkan ke klien
+    if (tagStartIndex > 0) {
+      outToStream += buffer.slice(0, tagStartIndex);
+      buffer = buffer.slice(tagStartIndex);
+    }
+
+    // Cari tag penutup yang cocok
+    const closeMatch = buffer.match(/<\/(?:zerollm[_\w:]*|tool_call|action|call|function|invoke)>/i);
+
+    if (!closeMatch) {
+      // Tag penutup belum tiba: tahan seluruh sisa buffer sampai chunk berikutnya
+      break;
+    }
+
+    const tagEndIndex = closeMatch.index + closeMatch[0].length;
+    const completeTagBlock = buffer.slice(0, tagEndIndex);
+    buffer = buffer.slice(tagEndIndex);
+
+    // Cek apakah blok tag utuh ini adalah pemanggilan tool
+    const isToolCallBlock = parseToolCalls(completeTagBlock) !== null || 
+                            /<(?:zerollm_tool_call|zerollm_call|action|call|tool_call)\b/i.test(completeTagBlock) ||
+                            /<\/(?:zerollm_tool_call|zerollm_call|action|call|tool_call)>/i.test(completeTagBlock);
+
+    if (isToolCallBlock) {
+      console.log(`[ZeroLLM StreamBuffer] 🛡️ Suppressed tool call tag from text stream (${completeTagBlock.length} chars)`);
+    } else {
+      outToStream += completeTagBlock;
+    }
+  }
+
+  streamBuffers.set(requestId, buffer);
+  return outToStream || null;
+}
+
+// ============================================================
 //  MESSAGE HANDLING FROM POPUP / CONTENT SCRIPT
 // ============================================================
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   switch (msg.type) {
     // Forwarded from content script to Cloudflare Worker
-    case "stream":
-      sendToBridge({ type: "stream", requestId: msg.requestId, delta: msg.delta });
+    case "stream": {
+      if (msg.delta && typeof msg.delta.content === "string") {
+        const processedContent = processStreamDelta(msg.requestId, msg.delta.content);
+        if (processedContent) {
+          sendToBridge({
+            type: "stream",
+            requestId: msg.requestId,
+            delta: { ...msg.delta, content: processedContent }
+          });
+        }
+      } else {
+        sendToBridge({ type: "stream", requestId: msg.requestId, delta: msg.delta });
+      }
       break;
+    }
     case "response": {
+      streamBuffers.delete(msg.requestId);
       const cleanContent = stripZeroLlmTags(msg.content);
       const toolCalls = parseToolCalls(msg.content);
       if (toolCalls && toolCalls.length > 0) {
         // Ekstrak teks pengantar/penjelasan asisten yang ada di luar tag tool call
         const textWithoutToolCalls = cleanContent
-          .replace(/<(?:zerollm_tool_call|zerollm_call|zerollm:call|action|call)[^>]*?>[\s\S]*?<\/(?:zerollm_tool_call|zerollm_call|zerollm:call|action|call)>/gi, "")
+          .replace(/<(?:zerollm_tool_call|zerollm_call|zerollm:call|action|call|zerollm_code)[^>]*?>[\s\S]*?<\/(?:zerollm_tool_call|zerollm_call|zerollm:call|action|call)>/gi, "")
           .replace(/<tool_call[^>]*?>[\s\S]*?<\/tool_call>/gi, "")
           .replace(/\[(?:ACTION|PANGGIL_FUNGSI|TOOL|CALL):[\s\S]*?\]/gi, "")
           .replace(/<(?:function|invoke)[^>]*?>[\s\S]*?<\/(?:function|invoke)>/gi, "")
@@ -1761,7 +1848,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (active && active.task) {
         const textWithoutToolCalls = (toolCalls && toolCalls.length > 0)
           ? cleanContent
-              .replace(/<(?:zerollm_tool_call|zerollm_call|zerollm:call|action|call)[^>]*?>[\s\S]*?<\/(?:zerollm_tool_call|zerollm_call|zerollm:call|action|call)>/gi, "")
+              .replace(/<(?:zerollm_tool_call|zerollm_call|zerollm:call|action|call|zerollm_code)[^>]*?>[\s\S]*?<\/(?:zerollm_tool_call|zerollm_call|zerollm:call|action|call)>/gi, "")
               .replace(/<tool_call[^>]*?>[\s\S]*?<\/tool_call>/gi, "")
               .replace(/\[(?:ACTION|PANGGIL_FUNGSI|TOOL|CALL):[\s\S]*?\]/gi, "")
               .replace(/<(?:function|invoke)[^>]*?>[\s\S]*?<\/(?:function|invoke)>/gi, "")
