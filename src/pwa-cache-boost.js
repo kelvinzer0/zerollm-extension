@@ -61,12 +61,34 @@
     // Non-critical, ignore
   }
 
-  // 2. ── PWA CacheStorage Engine (Cache-First for Static Assets) ──
+  // 2. ── PWA CacheStorage Engine (Safe Non-Code Assets Only & Auto-Purge) ──
   (async function initPwaCache() {
     if (!('caches' in window)) return;
 
+    // Purge old volatile chunk caches that could break SPA / React hydration
     try {
-      const CACHE_NAME = 'zerollm-pwa-cache-v1';
+      const keys = await window.caches.keys();
+      for (const k of keys) {
+        if (k.includes('zerollm-pwa-cache-v1')) {
+          await window.caches.delete(k);
+        }
+      }
+    } catch (_) {}
+
+    window.addEventListener('zerollm:purge-cache', async () => {
+      try {
+        const keys = await window.caches.keys();
+        for (const k of keys) {
+          if (k.startsWith('zerollm-pwa-cache')) {
+            await window.caches.delete(k);
+          }
+        }
+        console.log('[ZeroLLM PWA Cache] All ZeroLLM caches purged.');
+      } catch (_) {}
+    });
+
+    try {
+      const CACHE_NAME = 'zerollm-pwa-assets-v2';
       const cache = await window.caches.open(CACHE_NAME);
 
       const origFetch = window.fetch;
@@ -74,21 +96,19 @@
         const url = typeof resource === 'string' ? resource : resource?.url || '';
         const method = (init?.method || (typeof resource === 'object' && resource?.method) || 'GET').toUpperCase();
 
-        // Target static chunks, stylesheets, fonts, and images only (never dynamic API endpoints!)
-        const isStaticAsset = method === 'GET' && (
-          /\.(css|woff2?|ttf|svg|png|jpg|jpeg|webp|ico)(\?.*)?$/i.test(url) ||
-          /(_next\/static|assets\/chunk|static\/js|static\/css|\/chunks\/)/i.test(url)
-        ) && !/\/backend-api\/|\/api\/conversation|\/v1\//i.test(url);
+        // Target static stylesheets, fonts, and images only (NEVER dynamic JS chunks or API endpoints!)
+        const isSafeStaticAsset = method === 'GET' && (
+          /\.(css|woff2?|ttf|svg|png|jpg|jpeg|webp|ico)(\?.*)?$/i.test(url)
+        ) && !/\.(js|mjs)(\?.*)?$/i.test(url) && !/\/backend-api\/|\/api\/conversation|\/v1\//i.test(url);
 
-        if (isStaticAsset) {
+        if (isSafeStaticAsset) {
           try {
             const cachedResponse = await cache.match(resource);
             if (cachedResponse) {
-              // Stale-while-revalidate: return instant cache, update in background if online
               if (navigator.onLine) {
                 origFetch.apply(this, arguments).then((freshResponse) => {
                   if (freshResponse && freshResponse.status === 200) {
-                    try { cache.put(resource, freshResponse); } catch (_) {}
+                    try { cache.put(resource, freshResponse.clone()); } catch (_) {}
                   }
                 }).catch(() => {});
               }
@@ -96,7 +116,6 @@
             }
           } catch (_) {}
 
-          // Network fallback & cache population
           try {
             const freshResponse = await origFetch.apply(this, arguments);
             if (freshResponse && freshResponse.status === 200) {
@@ -104,7 +123,6 @@
             }
             return freshResponse;
           } catch (fetchErr) {
-            // If offline, attempt cache match as last resort
             const fallback = await cache.match(resource);
             if (fallback) return fallback;
             throw fetchErr;

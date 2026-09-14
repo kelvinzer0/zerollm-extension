@@ -1980,7 +1980,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       chrome.storage.local.set({ bridgeUrl, roomId, apiKey });
       connectBridge(msg.url, msg.room, apiKey);
+      if (msg.hardRefresh) {
+        hardRefreshModelTabs();
+      }
       break;
+
+    case "hardRefreshTabs":
+      hardRefreshModelTabs().then(() => {
+        sendResponse({ success: true });
+      });
+      return true;
 
     case "disconnect":
       disconnectBridge();
@@ -1996,6 +2005,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   return true;
 });
+
+async function hardRefreshModelTabs() {
+  try {
+    const allTabs = await chrome.tabs.query({});
+    for (const model of models) {
+      if (model.enabled === false) continue;
+      const patternRegex = wildcardToRegExp(model.urlPattern);
+      for (const tab of allTabs) {
+        if (tab.url && patternRegex.test(tab.url)) {
+          console.log(`[ZeroLLM] Hard refreshing tab #${tab.id} for model ${model.id} (bypassing cache)...`);
+          try {
+            await chrome.tabs.sendMessage(tab.id, { type: "purgePwaCache" }).catch(() => {});
+          } catch (_) {}
+          try {
+            chrome.tabs.reload(tab.id, { bypassCache: true });
+          } catch (_) {}
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[ZeroLLM] hardRefreshModelTabs error:", err.message);
+  }
+}
 
 function broadcastState() {
   chrome.runtime.sendMessage({

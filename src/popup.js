@@ -32,6 +32,7 @@ const reconnectBtn = document.getElementById("reconnectBtn");
 const copyKeyBtn = document.getElementById("copyKeyBtn");
 const copyRoomBtn = document.getElementById("copyRoomBtn");
 const copyUrlBtn = document.getElementById("copyUrlBtn");
+const hardRefreshBtn = document.getElementById("hardRefreshBtn");
 
 let currentModels = [];
 let currentApiKey = "";
@@ -343,13 +344,28 @@ reconnectBtn.addEventListener("click", () => {
     type: "connect",
     url: base,
     room: room,
-    apiKey: key
+    apiKey: key,
+    hardRefresh: true
   });
 
   setTimeout(() => {
     reconnectBtn.textContent = originalText;
   }, 1000);
 });
+
+// ── Hard Refresh AI Tabs (Purge PWA cache & reload) ──────────────────
+if (hardRefreshBtn) {
+  hardRefreshBtn.addEventListener("click", () => {
+    const orig = hardRefreshBtn.textContent;
+    hardRefreshBtn.textContent = "Refreshing...";
+    chrome.runtime.sendMessage({ type: "hardRefreshTabs" }, () => {
+      hardRefreshBtn.textContent = "✅ Refreshed";
+      setTimeout(() => {
+        hardRefreshBtn.textContent = orig;
+      }, 1500);
+    });
+  });
+}
 
 // ── Copy buttons ──────────────────────────────────────────────────────
 function copyToClipboard(text, btn) {
