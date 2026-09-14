@@ -478,7 +478,26 @@ async function navigateToHomeAreaIfNeeded(tabId, modelConfig) {
       /\/s\/[a-zA-Z0-9_-]+/i.test(currentUrl);
 
     if (isOldThread) {
-      console.log(`[ZeroLLM Navigation] Tab #${tabId} terdeteksi di percakapan lama (${currentUrl}). Navigasi ke Home Area: ${homeUrl}...`);
+      console.log(`[ZeroLLM Navigation] Tab #${tabId} terdeteksi di percakapan lama (${currentUrl}). Melakukan Soft-Reset instan...`);
+      
+      // 1. Coba SPA Soft-Reset instan via content script (100ms, tanpa reload browser)
+      try {
+        const softRes = await chrome.tabs.sendMessage(tabId, {
+          type: "softResetChat",
+          homeUrl: homeUrl
+        }).catch(() => null);
+
+        if (softRes?.success) {
+          console.log(`[ZeroLLM Navigation] Soft-Reset instan berhasil (${softRes.method})! Melewatkan hard reload.`);
+          await new Promise(r => setTimeout(r, 250));
+          return;
+        }
+      } catch (softErr) {
+        console.debug("[ZeroLLM Navigation] Soft-Reset gagal, melanjutkan ke hard reload:", softErr);
+      }
+
+      // 2. Fallback: Hard reload jika soft-reset tidak berhasil
+      console.log(`[ZeroLLM Navigation] Soft-Reset tidak tersedia, fallback ke navigasi normal: ${homeUrl}...`);
       await chrome.tabs.update(tabId, { url: homeUrl });
       await waitForTabComplete(tabId, 15000);
       await new Promise(r => setTimeout(r, 800));

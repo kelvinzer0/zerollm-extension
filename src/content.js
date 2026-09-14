@@ -740,6 +740,47 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // Instant SPA Soft-Reset (Tanpa Reload Browser Tab)
+  if (msg.type === "softResetChat") {
+    try {
+      // 1. Cari dan klik tombol New Chat bawaan SPA di DOM
+      const newChatSelectors = [
+        "a[href='/']",
+        "a[href='/new']",
+        "a[href='/chat']",
+        "button[aria-label='New chat']",
+        "button[aria-label='Obrolan baru']",
+        "button[data-testid='navigation-new-chat-button']",
+        "button[data-testid='new-chat-button']",
+        ".new-chat-btn",
+        "button.ds-new-chat",
+        "[aria-label*='New chat' i]",
+        "[aria-label*='Baru' i]"
+      ];
+      for (const sel of newChatSelectors) {
+        const btn = document.querySelector(sel);
+        if (btn && btn.offsetParent !== null) {
+          btn.click();
+          sendResponse({ success: true, method: "click", selector: sel });
+          return true;
+        }
+      }
+
+      // 2. Jika tombol tidak ditemukan, gunakan SPA History API
+      if (msg.homeUrl) {
+        window.history.pushState(null, '', msg.homeUrl);
+        window.dispatchEvent(new PopStateEvent('popstate'));
+        sendResponse({ success: true, method: "history" });
+        return true;
+      }
+    } catch(e) {
+      sendResponse({ success: false, error: e.message });
+      return true;
+    }
+    sendResponse({ success: false, error: "No new chat button found" });
+    return true;
+  }
+
   // Prepare input element and focus before Chrome Debugger CDP typing
   // If msg.query is provided, type directly via enterPrompt (bypasses CDP focus loss on ProseMirror)
   if (msg.type === "focusInput") {
