@@ -15,7 +15,7 @@
 import { DEFAULT_PRESETS } from "./presets.js";
 
 let ws = null;
-let bridgeUrl = "https://llm-bridge.insidexofficial.workers.dev";
+let bridgeUrl = "https://public-llm-bridge.warunglakku.com";
 let roomId = "default";
 let apiKey = "";
 let connectionState = "disconnected";
@@ -120,7 +120,14 @@ async function loadModels() {
     await chrome.storage.local.set({ customModels: models });
   }
 
-  if (data.bridgeUrl) bridgeUrl = data.bridgeUrl;
+  if (data.bridgeUrl) {
+    if (data.bridgeUrl.includes("insidexofficial.workers.dev")) {
+      bridgeUrl = "https://public-llm-bridge.warunglakku.com";
+      chrome.storage.local.set({ bridgeUrl });
+    } else {
+      bridgeUrl = data.bridgeUrl;
+    }
+  }
   if (data.roomId) roomId = data.roomId;
   if (data.apiKey) apiKey = data.apiKey;
   if (data.executionMode) executionMode = data.executionMode;

@@ -114,7 +114,7 @@ jobs:
                - Buka tab `chatgpt.com` atau `chatsmith.io` (atau provider web AI lainnya).
                - Pastikan tab tetap terbuka dalam browser Anda.
             3. **Gunakan pada Aplikasi / Script OpenAI Anda**:
-               - Masukkan Base URL: `https://llm-bridge.insidexofficial.workers.dev/v1`
+               - Masukkan Base URL: `https://public-llm-bridge.warunglakku.com/v1`
                - Masukkan API Key dari langkah 1.
                - Masukkan model sesuai tab: `chatgpt` atau `chatsmith`.
 
@@ -122,7 +122,7 @@ jobs:
             from openai import OpenAI
 
             client = OpenAI(
-                base_url="https://llm-bridge.insidexofficial.workers.dev/v1",
+                base_url="https://public-llm-bridge.warunglakku.com/v1",
                 api_key="PASTE_API_KEY_ANDA"
             )
 

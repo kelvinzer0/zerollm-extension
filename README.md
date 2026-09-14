@@ -32,7 +32,7 @@ ZeroLLM turns any AI chatbot web interface (ChatGPT, ChatSmith, Claude, Gemini, 
    - Klik **Load unpacked** dan pilih folder `zerollm-extension`
 2. **Sambungkan ke Bridge**:
    - Buka popup ZeroLLM
-   - Masukkan Cloudflare Bridge URL (default: `https://llm-bridge.insidexofficial.workers.dev`)
+   - Masukkan Cloudflare Bridge URL (default: `https://public-llm-bridge.warunglakku.com`)
    - Klik **🚀 Create New Room**
    - Salin **API Key** yang dihasilkan
 3. **Buka Tab Chatbot AI**:
