@@ -354,7 +354,7 @@ reconnectBtn.addEventListener("click", () => {
   }, 1000);
 });
 
-// ── Hard Refresh AI Tabs (Purge PWA cache & reload) ──────────────────
+// ── Reload AI Tabs ──────────────────────────────────────────────────
 if (hardRefreshBtn) {
   hardRefreshBtn.addEventListener("click", () => {
     const orig = hardRefreshBtn.textContent;

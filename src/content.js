@@ -839,21 +839,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  // Purge PWA cache and trigger hard refresh
-  if (msg.type === "purgePwaCache" || msg.type === "hardRefreshTab") {
-    try {
-      window.dispatchEvent(new CustomEvent("zerollm:purge-cache"));
-      if ('caches' in window) {
-        window.caches.keys().then(keys => {
-          keys.forEach(k => {
-            if (k.includes('zerollm-pwa')) window.caches.delete(k);
-          });
-        });
-      }
-    } catch (_) {}
-    if (msg.type === "hardRefreshTab") {
-      window.location.reload(true);
-    }
+  // Hard reload tab if requested
+  if (msg.type === "hardRefreshTab") {
+    window.location.reload();
     sendResponse({ ok: true });
     return true;
   }

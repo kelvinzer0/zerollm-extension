@@ -353,10 +353,7 @@ export async function hardRefreshModelTabs(models) {
       const patternRegex = wildcardToRegExp(model.urlPattern);
       for (const tab of allTabs) {
         if (tab.url && patternRegex.test(tab.url)) {
-          console.log(`[ZeroLLM] Hard refreshing tab #${tab.id} for model ${model.id} (bypassing cache)...`);
-          try {
-            await chrome.tabs.sendMessage(tab.id, { type: "purgePwaCache" }).catch(() => {});
-          } catch (_) {}
+          console.log(`[ZeroLLM] Reloading tab #${tab.id} for model ${model.id}...`);
           try {
             chrome.tabs.reload(tab.id, { bypassCache: true });
           } catch (_) {}

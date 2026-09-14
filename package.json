@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/background.js src/content.js src/popup.js src/presets.js src/pwa-cache-boost.js src/modules/*.js",
+    "check": "node --check src/background.js src/content.js src/popup.js src/presets.js src/modules/*.js",
     "lint": "npm run check && npm test"
   },
   "keywords": [

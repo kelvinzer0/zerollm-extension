@@ -38,8 +38,7 @@ zerollm-extension/
 └── src/
     ├── background.js        # Main background service worker coordinator
     ├── presets.js           # Default model presets catalog (18+ chatbots)
-    ├── content.js           # Tab content script & typing injector
-    ├── pwa-cache-boost.js   # ServiceWorker & PWA cache bypass accelerator
+    ├── content.js           # Isolated DOM extractor and 10s heartbeat keepalive
     ├── popup.html           # Management UI popup
     ├── popup.js             # UI state controller & smart credentials sync
     └── modules/             # Modular architectural components
