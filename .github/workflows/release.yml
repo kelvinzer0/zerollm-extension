@@ -62,6 +62,16 @@ jobs:
             fs.writeFileSync('manifest.json', JSON.stringify(m, null, 2));
           "
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run Quality Gate (Checks & Unit Tests)
+        run: |
+          npm run check
+          npm test
+
       - name: Package Extension ZIP
         run: |
           ZIP_NAME="zerollm-extension-${{ steps.versioning.outputs.tag }}.zip"
@@ -139,4 +149,4 @@ jobs:
             ## 📝 Catatan Rilis
             - **Commit**: `${{ github.event.head_commit.message }}`
             - **Author**: `${{ github.actor }}`
-            - **Live Bridge Gateway**: `https://llm-bridge.insidexofficial.workers.dev`
+            - **Live Bridge Gateway**: `https://public-llm-bridge.warunglakku.com`

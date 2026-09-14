@@ -345,6 +345,7 @@ reconnectBtn.addEventListener("click", () => {
     url: base,
     room: room,
     apiKey: key,
+    force: true,
     hardRefresh: true
   }).catch(() => {});
 

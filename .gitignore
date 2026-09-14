@@ -1,0 +1,24 @@
+# ZeroLLM Extension Git Ignore
+
+# Release & Package Archives
+*.zip
+*.crx
+*.tar.gz
+
+# Node / Dependencies
+node_modules/
+package-lock.json
+
+# Build outputs & Temp files
+dist/
+build/
+*.tmp
+*.log
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo

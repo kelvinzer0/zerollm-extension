@@ -926,6 +926,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // Keep-Alive connection to background service worker to prevent MV3 hibernation
 let keepAlivePort = null;
 let isPageBfCached = false;
+let keepAliveInterval = null;
 
 function setupKeepAlivePort() {
   if (isPageBfCached) return;
@@ -937,10 +938,24 @@ function setupKeepAlivePort() {
       // Access chrome.runtime.lastError to clear unchecked error on bfcache transition
       const _ = chrome.runtime.lastError;
       keepAlivePort = null;
+      clearInterval(keepAliveInterval);
       if (!isPageBfCached) {
         setTimeout(setupKeepAlivePort, 5000);
       }
     });
+
+    clearInterval(keepAliveInterval);
+    keepAliveInterval = setInterval(() => {
+      if (keepAlivePort && !isPageBfCached) {
+        try {
+          keepAlivePort.postMessage({ type: "keepalive" });
+        } catch (_) {
+          keepAlivePort = null;
+          clearInterval(keepAliveInterval);
+          setupKeepAlivePort();
+        }
+      }
+    }, 10000);
   } catch (e) {
     keepAlivePort = null;
   }
@@ -949,6 +964,10 @@ function setupKeepAlivePort() {
 window.addEventListener("pagehide", (event) => {
   if (event.persisted) {
     isPageBfCached = true;
+  }
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval);
+    keepAliveInterval = null;
   }
   if (keepAlivePort) {
     try { keepAlivePort.disconnect(); } catch (_) {}
@@ -968,4 +987,5 @@ document.addEventListener("visibilitychange", () => {
 });
 
 setupKeepAlivePort();
+
 
