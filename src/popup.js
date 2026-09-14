@@ -130,6 +130,9 @@ function updateState(state) {
   if (state.apiKey) {
     currentApiKey = state.apiKey;
     dispApiKey.textContent = state.apiKey;
+  } else {
+    currentApiKey = "";
+    dispApiKey.textContent = "-";
   }
 
   // Multi-Window Parallel Mode toggle state
@@ -252,11 +255,19 @@ newRoomBtn.addEventListener("click", async () => {
     const res = await fetch(`${base}/new`, {
       headers: { "User-Agent": "Mozilla/5.0" }
     });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    }
     const data = await res.json();
+
+    if (!data.api_key) {
+      throw new Error("Bridge endpoint did not return an 'api_key'. If you are self-hosting, check your Nginx configuration: public-llm-bridge may be proxying to mcp-bridge instead of llm-bridge.");
+    }
     
     cfgRoomId.value = data.room;
+    currentApiKey = data.api_key;
     dispApiKey.textContent = data.api_key;
-    dispBaseUrl.textContent = data.api_base_url;
+    dispBaseUrl.textContent = data.api_base_url || `${base}/v1`;
 
     chrome.runtime.sendMessage({
       type: "connect",

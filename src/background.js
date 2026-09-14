@@ -127,10 +127,40 @@ async function loadModels() {
     } else {
       bridgeUrl = data.bridgeUrl;
     }
+  } else {
+    bridgeUrl = "https://public-llm-bridge.warunglakku.com";
+    chrome.storage.local.set({ bridgeUrl });
   }
   if (data.roomId) roomId = data.roomId;
   if (data.apiKey) apiKey = data.apiKey;
   if (data.executionMode) executionMode = data.executionMode;
+
+  // Auto-generate room and API key if missing or uninitialized
+  if (!apiKey || !roomId || roomId === "default") {
+    await ensureRoomAndKey();
+  }
+}
+
+async function ensureRoomAndKey() {
+  const base = (bridgeUrl || "https://public-llm-bridge.warunglakku.com").replace(/\/+$/, "");
+  try {
+    const res = await fetch(`${base}/new`, {
+      headers: { "User-Agent": "Mozilla/5.0" }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.room && data.api_key) {
+        roomId = data.room;
+        apiKey = data.api_key;
+        await chrome.storage.local.set({ bridgeUrl: base, roomId, apiKey });
+        broadcastState();
+        return true;
+      }
+    }
+  } catch (err) {
+    console.error("[ZeroLLM] Failed to auto-generate room and API key:", err);
+  }
+  return false;
 }
 
 // ============================================================
@@ -483,7 +513,9 @@ function connectBridge(url, room, key) {
 
   bridgeUrl = url;
   roomId = room;
-  apiKey = key || "";
+  if (key !== undefined && key !== null && key !== "") {
+    apiKey = key;
+  }
   connectionState = "connecting";
   broadcastState();
 
@@ -1563,7 +1595,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       break;
 
     case "connect":
-      connectBridge(msg.url, msg.room, msg.apiKey);
+      bridgeUrl = msg.url;
+      roomId = msg.room;
+      if (msg.apiKey !== undefined && msg.apiKey !== null && msg.apiKey !== "") {
+        apiKey = msg.apiKey;
+      }
+      chrome.storage.local.set({ bridgeUrl, roomId, apiKey });
+      connectBridge(msg.url, msg.room, apiKey);
       break;
 
     case "disconnect":
