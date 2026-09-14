@@ -25,7 +25,23 @@ export function safeParseJsonArgs(argsStr, fnName) {
   // Hapus sisa tag markdown code block ```lang jika ada
   argsStr = argsStr.replace(/^```[a-zA-Z0-9_-]*\s*\n?([\s\S]*?)\n?```$/g, "$1").trim();
 
-  // 1. Coba parse langsung jika sudah valid JSON
+  // 1. Dukungan XML parameter di dalam tag tool: <parameter name="filePath">...</parameter>
+  if (argsStr.includes("<parameter")) {
+    const paramRegex = /<parameter(?:=|\s+name=)["\x27]?([\w_-]+)["\x27]?[^>]*>([\s\S]*?)(?:<\/parameter>|(?=<parameter|$))/gi;
+    let pMatch;
+    const argsObj = {};
+    let found = false;
+    while ((pMatch = paramRegex.exec(argsStr)) !== null) {
+      found = true;
+      const key = pMatch[1];
+      let val = pMatch[2].trim();
+      try { val = JSON.parse(val); } catch(e) {}
+      argsObj[key] = val;
+    }
+    if (found) return JSON.stringify(argsObj);
+  }
+
+  // 2. Coba parse langsung jika sudah valid JSON
   try {
     const parsed = JSON.parse(argsStr);
     if (typeof parsed === "object" && parsed !== null) {
@@ -33,7 +49,16 @@ export function safeParseJsonArgs(argsStr, fnName) {
     }
   } catch(e) {}
 
-  // 2. Normalisasi kutip satu (single quote) menjadi kutip dua jika mirip objek Python / JS
+  // 3. Normalisasi trailing comma
+  try {
+    const noTrailing = argsStr.replace(/,\s*([\}\]])/g, "$1");
+    const parsed = JSON.parse(noTrailing);
+    if (typeof parsed === "object" && parsed !== null) {
+      return JSON.stringify(parsed);
+    }
+  } catch(e) {}
+
+  // 3b. Normalisasi kutip satu (single quote) jika mirip Python dict {'a': 1}
   try {
     const doubleQuoted = argsStr.replace(/'/g, '"');
     const parsed = JSON.parse(doubleQuoted);
@@ -42,37 +67,81 @@ export function safeParseJsonArgs(argsStr, fnName) {
     }
   } catch(e) {}
 
-  // 3. Tangani objek JSON yang berisi baris perintah dengan unescaped quotes dan raw newlines
+  // 4. Bi-directional property peeling untuk JSON objek yang mengandung kode/kutip unescaped
   if (argsStr.startsWith("{") && argsStr.endsWith("}")) {
-    try {
-      const noTrailing = argsStr.replace(/,\s*([\}\]])/g, "$1");
-      return JSON.stringify(JSON.parse(noTrailing));
-    } catch(e) {}
-
+    let inner = argsStr.slice(1, -1).trim();
     const result = {};
-    let working = argsStr.slice(1, -1).trim();
 
-    const trailingPropRegex = /,\s*"([a-zA-Z0-9_]+)"\s*:\s*([0-9.]+|true|false|null|"[^"]*")\s*$/;
-    let propMatch;
-    while ((propMatch = trailingPropRegex.exec(working)) !== null) {
-      const k = propMatch[1];
-      let v = propMatch[2];
-      try { v = JSON.parse(v); } catch(e) {}
-      result[k] = v;
-      working = working.slice(0, propMatch.index).trim();
+    // Standard JSON property regex matching dari DEPAN:
+    // Mencocokkan "key": value, di mana value adalah tipe standar (number, bool, null, atau properly-escaped string)
+    const standardFrontRegex = /^\s*"([a-zA-Z0-9_]+)"\s*:\s*(true|false|null|-?\d+(?:\.\d+)?|"(?:[^"\\]|\\.)*")\s*(?:,\s*|$)/;
+    let matchedFront = true;
+    while (matchedFront) {
+      const m = inner.match(standardFrontRegex);
+      if (m) {
+        const k = m[1];
+        let v = m[2];
+        try { v = JSON.parse(v); } catch (_) {}
+        result[k] = v;
+        inner = inner.slice(m[0].length).trim();
+      } else {
+        matchedFront = false;
+      }
     }
 
-    const firstPropMatch = working.match(/^"([a-zA-Z0-9_]+)"\s*:\s*"?([\s\S]*)/);
-    if (firstPropMatch) {
-      const k = firstPropMatch[1];
-      let v = firstPropMatch[2];
-      if (v.endsWith('"')) v = v.slice(0, -1);
-      result[k] = v.trim();
+    // Standard JSON property regex matching dari BELAKANG:
+    // Mencocokkan , "key": value $
+    const standardBackRegex = /,\s*"([a-zA-Z0-9_]+)"\s*:\s*(true|false|null|-?\d+(?:\.\d+)?|"(?:[^"\\]|\\.)*")\s*$/;
+    let matchedBack = true;
+    const backProps = [];
+    while (matchedBack) {
+      const m = inner.match(standardBackRegex);
+      if (m) {
+        const k = m[1];
+        let v = m[2];
+        try { v = JSON.parse(v); } catch (_) {}
+        backProps.unshift({ key: k, value: v });
+        inner = inner.slice(0, m.index).trim();
+      } else {
+        matchedBack = false;
+      }
+    }
+
+    for (const bp of backProps) {
+      result[bp.key] = bp.value;
+    }
+
+    // Sisa di dalam `inner` adalah payload string kode yang memuat unescaped double quotes / raw newlines
+    // Contoh: "content": "<!DOCTYPE html>\n<html lang="en">...</html>"
+    if (inner.length > 0) {
+      const payloadMatch = inner.match(/^\s*"([a-zA-Z0-9_]+)"\s*:\s*"?([\s\S]*)/);
+      if (payloadMatch) {
+        const payloadKey = payloadMatch[1];
+        let payloadVal = payloadMatch[2].trim();
+        if (payloadVal.endsWith("\"")) {
+          payloadVal = payloadVal.slice(0, -1);
+        }
+        // Unescape sequence standar seperti \n, \r, \t sambil menjaga kutip ganda internal
+        payloadVal = payloadVal.replace(/\\n/g, "\n")
+                               .replace(/\\r/g, "\r")
+                               .replace(/\\t/g, "\t")
+                               .replace(/\\"/g, "\"")
+                               .replace(/\\\\/g, "\\");
+        result[payloadKey] = payloadVal;
+      } else {
+        const fallbackKey = (fnName === "exec" || fnName === "bash") ? "command"
+                          : (fnName === "read" || fnName === "edit" || fnName === "write") ? "content"
+                          : "input";
+        result[fallbackKey] = inner;
+      }
+    }
+
+    if (Object.keys(result).length > 0) {
       return JSON.stringify(result);
     }
   }
 
-  // 4. Jika bukan objek JSON sama sekali tapi teks perintah mentah / skrip kode
+  // 5. Jika bukan objek JSON sama sekali tapi teks perintah mentah / skrip kode
   if (!argsStr.startsWith("{")) {
     const defaultKey = (fnName === "exec" || fnName === "bash") ? "command"
                      : (fnName === "read" || fnName === "edit" || fnName === "write") ? "path"
@@ -80,7 +149,7 @@ export function safeParseJsonArgs(argsStr, fnName) {
     return JSON.stringify({ [defaultKey]: argsStr.trim() });
   }
 
-  // 5. Fallback terakhir: bungkus raw text sebagai input JSON valid
+  // 6. Fallback terakhir: bungkus raw text sebagai input JSON valid
   return JSON.stringify({ input: argsStr.trim() });
 }
 

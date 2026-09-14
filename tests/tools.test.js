@@ -15,6 +15,17 @@ test("safeParseJsonArgs parses valid and slightly malformed JSON", () => {
   assert.equal(safeParseJsonArgs("<zerollm_code>pwd</zerollm_code>", "exec"), '{"command":"pwd"}');
 });
 
+test("safeParseJsonArgs correctly parses unescaped HTML/code in content field", () => {
+  const userCase = '{"filePath":"/home/kelvinandriancom/chess-project/index.html","content":"<!DOCTYPE html>\\n<html lang="en">\\n<head>\\n <meta charset="UTF-8">\\n <title>Chess Game</title>\\n</head>\\n<body>\\n <div class="container">\\n <h1>Chess Game</h1>\\n </div>\\n</body>\\n</html>"}';
+  const parsedStr = safeParseJsonArgs(userCase, "write");
+  const parsed = JSON.parse(parsedStr);
+
+  assert.equal(parsed.filePath, "/home/kelvinandriancom/chess-project/index.html");
+  assert.ok(parsed.content.includes('<html lang="en">'));
+  assert.ok(parsed.content.includes('<meta charset="UTF-8">'));
+  assert.ok(parsed.content.includes('<h1>Chess Game</h1>'));
+});
+
 test("parseToolCalls detects zerollm_tool_call tag", () => {
   const text = 'Here is the weather: <zerollm_tool_call name="get_weather">{"city": "Jakarta"}</zerollm_tool_call>';
   const calls = parseToolCalls(text);
