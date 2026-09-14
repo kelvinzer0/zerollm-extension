@@ -569,15 +569,17 @@ function connectBridge(url, room, key) {
   }
   clearInterval(pingInterval);
 
-  bridgeUrl = url;
-  roomId = room;
+  const cleanUrl = (url || "").trim().replace(/\/+$/, "");
+  bridgeUrl = cleanUrl;
+  roomId = (room || "").trim();
   if (key !== undefined && key !== null && key !== "") {
-    apiKey = key;
+    apiKey = key.trim();
   }
   connectionState = "connecting";
   broadcastState();
 
-  const wsUrl = url.replace(/^http/, "ws") + `/ws/extension?room=${roomId}`;
+  const wsBase = cleanUrl.replace(/^http/, "ws");
+  const wsUrl = `${wsBase}/ws/extension?room=${encodeURIComponent(roomId)}`;
   console.log(`[ZeroLLM] Connecting to Bridge: ${wsUrl}`);
 
   try {
