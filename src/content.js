@@ -633,6 +633,60 @@ window.addEventListener("message", (event) => {
   }
 });
 
+function hasUnclosedToolTag(text) {
+  if (!text || typeof text !== "string") return false;
+  const toolTagNames = [
+    "zerollm_tool_call",
+    "zerollm_call",
+    "zerollm:call",
+    "action",
+    "call",
+    "tool_call",
+    "function",
+    "invoke",
+    "zerollm_code"
+  ];
+  for (const name of toolTagNames) {
+    const escapedName = name.replace(":", "\\:");
+    const openRegex = new RegExp(`<${escapedName}\\b[^>]*>`, "gi");
+    const closeRegex = new RegExp(`</${escapedName}>`, "gi");
+    const openCount = (text.match(openRegex) || []).length;
+    const closeCount = (text.match(closeRegex) || []).length;
+    if (openCount > closeCount) return true;
+  }
+  return false;
+}
+
+function autoCloseToolTagsIfNeeded(text) {
+  if (!text || typeof text !== "string") return text;
+  const toolTagNames = [
+    "zerollm_tool_call",
+    "zerollm_call",
+    "zerollm:call",
+    "action",
+    "call",
+    "tool_call",
+    "function",
+    "invoke",
+    "zerollm_code"
+  ];
+  let repaired = text;
+  for (const name of toolTagNames) {
+    const escapedName = name.replace(":", "\\:");
+    const openRegex = new RegExp(`<${escapedName}\\b[^>]*>`, "gi");
+    const closeRegex = new RegExp(`</${escapedName}>`, "gi");
+    const openCount = (repaired.match(openRegex) || []).length;
+    const closeCount = (repaired.match(closeRegex) || []).length;
+    if (openCount > closeCount) {
+      const missing = openCount - closeCount;
+      for (let i = 0; i < missing; i++) {
+        repaired += `</${name}>`;
+      }
+    }
+  }
+  return repaired;
+}
+
 /**
  * Observe live AI response stream (Hybrid: Direct SSE Stream First -> DOM Fallback)
  */
@@ -660,11 +714,26 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
 
       // ── METODE UTAMA: DIRECT SSE STREAM DARI INTERCEPTOR ──
       if (streamSession.hasReceivedStream) {
+        const hasUnclosed = hasUnclosedToolTag(streamSession.fullText);
+        const isDomStreaming = checkIsStreaming(modelConfig);
+
+        // Jika terdapat tag <zerollm_* atau <tool_call yang BELUM tertutup oleh </zerollm_*>:
+        // WAJIB TUNGGU hingga tag penutup tiba dari web AI!
+        if (hasUnclosed) {
+          if (isDomStreaming || pollCount < 100) {
+            return;
+          }
+        }
+
         if (streamSession.isCompleted && streamSession.fullText) {
+          const finalizedText = hasUnclosed
+            ? autoCloseToolTagsIfNeeded(streamSession.fullText)
+            : streamSession.fullText;
+
           clearInterval(interval);
           activeStreamSession = null;
-          console.log(`[ZeroLLM StreamFirst] Completed via Direct SSE Stream (${streamSession.fullText.length} chars)`);
-          resolve(cleanResultMarkdown(streamSession.fullText));
+          console.log(`[ZeroLLM StreamFirst] Completed via Direct SSE Stream (${finalizedText.length} chars)`);
+          resolve(cleanResultMarkdown(finalizedText));
           return;
         }
 
@@ -673,7 +742,10 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
             clearInterval(interval);
             activeStreamSession = null;
             if (streamSession.fullText) {
-              resolve(cleanResultMarkdown(streamSession.fullText));
+              const finalizedText = hasUnclosedToolTag(streamSession.fullText)
+                ? autoCloseToolTagsIfNeeded(streamSession.fullText)
+                : streamSession.fullText;
+              resolve(cleanResultMarkdown(finalizedText));
             } else {
               reject(new Error("Timeout during direct SSE stream reading"));
             }

@@ -5,7 +5,9 @@ import {
   parseToolCalls,
   formatMessagesToPrompt,
   formatToolResultToXml,
-  stripZeroLlmTags
+  stripZeroLlmTags,
+  hasUnclosedToolTag,
+  autoCloseToolTagsIfNeeded
 } from "../src/modules/tools.js";
 
 test("safeParseJsonArgs parses valid and slightly malformed JSON", () => {
@@ -76,4 +78,27 @@ test("formatToolResultToXml converts tool output into semantic XML", () => {
 test("stripZeroLlmTags strips assistant tags", () => {
   const raw = "<zerollm_assistant>\nHello!\n</zerollm_assistant>";
   assert.equal(stripZeroLlmTags(raw), "Hello!");
+});
+
+test("hasUnclosedToolTag detects unclosed tool tags accurately", () => {
+  assert.equal(hasUnclosedToolTag('<zerollm_tool_call name="write">{"filePath":"test.txt"}'), true);
+  assert.equal(hasUnclosedToolTag('<zerollm_tool_call name="write">{"filePath":"test.txt"}</zerollm_tool_call>'), false);
+  assert.equal(hasUnclosedToolTag('<tool_call>{"command":"ls"}'), true);
+  assert.equal(hasUnclosedToolTag('<tool_call>{"command":"ls"}</tool_call>'), false);
+  assert.equal(hasUnclosedToolTag("Teks biasa tanpa tag tool apapun"), false);
+});
+
+test("autoCloseToolTagsIfNeeded repairs truncated tool calls to allow JSON parsing", () => {
+  const truncated = '<zerollm_tool_call name="write">{"filePath":"/tmp/test.js","content":"ok"}';
+  assert.equal(hasUnclosedToolTag(truncated), true);
+
+  const repaired = autoCloseToolTagsIfNeeded(truncated);
+  assert.ok(repaired.endsWith("</zerollm_tool_call>"));
+  assert.equal(hasUnclosedToolTag(repaired), false);
+
+  const calls = parseToolCalls(repaired);
+  assert.ok(calls);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].function.name, "write");
+  assert.equal(JSON.parse(calls[0].function.arguments).filePath, "/tmp/test.js");
 });

@@ -53,7 +53,16 @@ export function processStreamDelta(requestId, deltaContent, isToolCallChecker) {
 
     if (!tagMatch) {
       const partialTagMatch = buffer.match(/<[a-zA-Z0-9_:*-]*$/);
-      if (partialTagMatch && "<zerollm".startsWith(partialTagMatch[0].toLowerCase())) {
+      const isPotentialToolTag = partialTagMatch && [
+        "zerollm",
+        "tool_call",
+        "action",
+        "call",
+        "function",
+        "invoke"
+      ].some(prefix => prefix.startsWith(partialTagMatch[0].slice(1).toLowerCase()));
+
+      if (isPotentialToolTag) {
         const safeText = buffer.slice(0, partialTagMatch.index);
         outToStream += safeText;
         buffer = buffer.slice(partialTagMatch.index);

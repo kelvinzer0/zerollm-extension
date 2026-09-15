@@ -13,7 +13,8 @@ import {
 import {
   formatMessagesToPrompt,
   parseToolCalls,
-  stripZeroLlmTags
+  stripZeroLlmTags,
+  autoCloseToolTagsIfNeeded
 } from "./modules/tools.js";
 import { enrichToolCallsWithWrapper } from "./modules/shell-wrapper.js";
 import { nativeTypeAndSend } from "./modules/cdp.js";
@@ -460,8 +461,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     case "response": {
       deleteStreamBuffer(msg.requestId);
-      const cleanContent = stripZeroLlmTags(msg.content);
-      const rawToolCalls = parseToolCalls(msg.content);
+      const textToProcess = autoCloseToolTagsIfNeeded(msg.content);
+      const cleanContent = stripZeroLlmTags(textToProcess);
+      const rawToolCalls = parseToolCalls(textToProcess);
       const toolCalls = rawToolCalls ? enrichToolCallsWithWrapper(rawToolCalls) : null;
 
       if (toolCalls && toolCalls.length > 0) {

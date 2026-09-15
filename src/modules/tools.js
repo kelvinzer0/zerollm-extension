@@ -702,3 +702,76 @@ export function stripZeroLlmTags(content) {
     .replace(/\s*<\/zerollm_assistant>$/i, "")
     .trim();
 }
+
+/**
+ * Memeriksa apakah terdapat tag pembuka tool call yang belum memiliki tag penutup
+ */
+export function hasUnclosedToolTag(text) {
+  if (!text || typeof text !== "string") return false;
+
+  const toolTagNames = [
+    "zerollm_tool_call",
+    "zerollm_call",
+    "zerollm:call",
+    "action",
+    "call",
+    "tool_call",
+    "function",
+    "invoke",
+    "zerollm_code"
+  ];
+
+  for (const name of toolTagNames) {
+    const escapedName = name.replace(":", "\\:");
+    const openRegex = new RegExp(`<${escapedName}\\b[^>]*>`, "gi");
+    const closeRegex = new RegExp(`</${escapedName}>`, "gi");
+
+    const openCount = (text.match(openRegex) || []).length;
+    const closeCount = (text.match(closeRegex) || []).length;
+
+    if (openCount > closeCount) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Secara otomatis menutup tag tool call yang belum tertutup (fail-safe penutup tag)
+ */
+export function autoCloseToolTagsIfNeeded(text) {
+  if (!text || typeof text !== "string") return text;
+
+  const toolTagNames = [
+    "zerollm_tool_call",
+    "zerollm_call",
+    "zerollm:call",
+    "action",
+    "call",
+    "tool_call",
+    "function",
+    "invoke",
+    "zerollm_code"
+  ];
+
+  let repaired = text;
+  for (const name of toolTagNames) {
+    const escapedName = name.replace(":", "\\:");
+    const openRegex = new RegExp(`<${escapedName}\\b[^>]*>`, "gi");
+    const closeRegex = new RegExp(`</${escapedName}>`, "gi");
+
+    const openCount = (repaired.match(openRegex) || []).length;
+    const closeCount = (repaired.match(closeRegex) || []).length;
+
+    if (openCount > closeCount) {
+      const missing = openCount - closeCount;
+      for (let i = 0; i < missing; i++) {
+        repaired += `</${name}>`;
+      }
+    }
+  }
+
+  return repaired;
+}
+
