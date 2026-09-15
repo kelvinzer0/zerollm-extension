@@ -438,6 +438,8 @@ function cleanResultMarkdown(markdown) {
     .replace(/\[\s*(https?:\/\/[^\s\]]+?)(?:["'\s>]+)?\s*\]\(\s*https?:\/\/[^\s\)]+?\s*\)/gi, (match, url) => {
       return url.replace(/["'>\s\\]+$/, "");
     })
+    // Hapus tag zerollm_available_tools jika ikut terulang/terecho oleh model
+    .replace(/<zerollm_available_tools>[\s\S]*?<\/zerollm_available_tools>/gi, "")
     .replace(/\n{3,}/g, "\n\n");
   return cleaned.trim();
 }

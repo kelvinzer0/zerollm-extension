@@ -554,7 +554,7 @@ export function formatMessagesToPrompt(messages, tools = []) {
   const hasTools = Array.isArray(tools) && tools.length > 0;
 
   if (hasTools) {
-    let toolDirective = "Fungsi/Tools eksternal yang tersedia:\n";
+    let toolListStr = "";
     const isLargeToolSet = tools.length > 10;
 
     tools.forEach((t, idx) => {
@@ -564,11 +564,12 @@ export function formatMessagesToPrompt(messages, tools = []) {
       if (fn.parameters && fn.parameters.properties) {
         params = Object.keys(fn.parameters.properties).join(", ");
       }
-      toolDirective += `${idx + 1}. ${fn.name}(${params})${desc}\n`;
+      toolListStr += `${idx + 1}. ${fn.name}(${params})${desc}\n`;
     });
 
-    toolDirective += "\n[ATURAN PEMANGGILAN TOOL - OPENAI SPEC]\n";
-    toolDirective += "Jika permintaan pengguna membutuhkan informasi eksternal atau fungsi di atas:\n";
+    let toolDirective = `<zerollm_available_tools>\n${toolListStr.trim()}\n</zerollm_available_tools>\n\n`;
+    toolDirective += "[ATURAN PEMANGGILAN TOOL - OPENAI SPEC]\n";
+    toolDirective += "Gunakan fungsi di dalam tag <zerollm_available_tools> jika permintaan pengguna membutuhkan aksi atau data eksternal.\n";
     toolDirective += "Anda WAJIB memanggil fungsinya dengan format tag resmi berikut tanpa teks pembuka/penutup lainnya:\n";
     toolDirective += '<zerollm_tool_call name="nama_fungsi">{"parameter": "nilai"}</zerollm_tool_call>\n';
     toolDirective += "Contoh:\n";
@@ -698,6 +699,7 @@ export function stripInboundMeta(text) {
 export function stripZeroLlmTags(content) {
   if (!content || typeof content !== "string") return content;
   return content
+    .replace(/<zerollm_available_tools>[\s\S]*?<\/zerollm_available_tools>/gi, "")
     .replace(/^<zerollm_assistant>\s*/i, "")
     .replace(/\s*<\/zerollm_assistant>$/i, "")
     .trim();

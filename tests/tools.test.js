@@ -67,6 +67,32 @@ test("formatMessagesToPrompt wraps messages in ZeroLLM tags", () => {
   assert.ok(prompt.includes("Hello world"));
 });
 
+test("formatMessagesToPrompt wraps tools in <zerollm_available_tools>", () => {
+  const messages = [
+    { role: "user", content: "Check directory" }
+  ];
+  const tools = [
+    {
+      type: "function",
+      function: {
+        name: "bash",
+        description: "Execute bash commands",
+        parameters: {
+          type: "object",
+          properties: {
+            command: { type: "string" }
+          }
+        }
+      }
+    }
+  ];
+  const prompt = formatMessagesToPrompt(messages, tools);
+  assert.ok(prompt.includes("<zerollm_available_tools>"));
+  assert.ok(prompt.includes("1. bash(command) (Execute bash commands)"));
+  assert.ok(prompt.includes("</zerollm_available_tools>"));
+  assert.ok(!prompt.includes("Fungsi/Tools eksternal yang tersedia:"));
+});
+
 test("formatToolResultToXml converts tool output into semantic XML", () => {
   const result = { stdout: "hello from shell", exitCode: 0 };
   const xml = formatToolResultToXml(result, "bash");
@@ -75,8 +101,8 @@ test("formatToolResultToXml converts tool output into semantic XML", () => {
   assert.ok(xml.includes("hello from shell"));
 });
 
-test("stripZeroLlmTags strips assistant tags", () => {
-  const raw = "<zerollm_assistant>\nHello!\n</zerollm_assistant>";
+test("stripZeroLlmTags strips assistant and available_tools tags", () => {
+  const raw = "<zerollm_available_tools>1. bash()</zerollm_available_tools><zerollm_assistant>\nHello!\n</zerollm_assistant>";
   assert.equal(stripZeroLlmTags(raw), "Hello!");
 });
 
