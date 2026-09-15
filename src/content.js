@@ -754,6 +754,16 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
           }
           return;
         }
+
+        // Jika stream sudah ditandai selesai tapi teks kosong, atau stream belum menghasilkan teks setelah 30 polling (~4.5s),
+        // lepaskan flag hasReceivedStream agar fallback ke DOM observer berjalan lancar
+        if (streamSession.isCompleted && !streamSession.fullText) {
+          console.warn("[ZeroLLM StreamFirst] SSE Stream ended with empty text, falling back to DOM observer");
+          streamSession.hasReceivedStream = false;
+        } else if (!streamSession.streamStarted && !streamSession.fullText && pollCount > 30) {
+          console.warn("[ZeroLLM StreamFirst] No SSE deltas received after 30 polls, falling back to DOM observer");
+          streamSession.hasReceivedStream = false;
+        }
       }
 
       // ── METODE CADANGAN: DOM OBSERVER (FALLBACK) ──

@@ -1,13 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isAiStreamUrl, extractTextFromSseJson } from "../src/modules/sse-parser.js";
+import { isAiStreamUrl, extractTextFromSseJson, isStreamCompleted } from "../src/modules/sse-parser.js";
 
 test("isAiStreamUrl correctly identifies AI stream endpoints", () => {
   assert.equal(isAiStreamUrl("https://chatgpt.com/backend-api/conversation"), true);
+  assert.equal(isAiStreamUrl("https://chatgpt.com/backend-api/f/conversation"), true);
   assert.equal(isAiStreamUrl("https://chatgpt.com/backend-api/lat/r"), true);
   assert.equal(isAiStreamUrl("https://claude.ai/api/organizations/123/chat_conversations/456/completion"), true);
   assert.equal(isAiStreamUrl("https://chat.qwen.ai/api/v2/chat/completions?chat_id=abc"), true);
   assert.equal(isAiStreamUrl("https://chat.deepseek.com/api/v0/chat/completion"), true);
+  assert.equal(isAiStreamUrl("https://aistudio.xiaomimimo.com/open-apis/bot/chat?xiaomichatbot_ph=abc"), true);
   assert.equal(isAiStreamUrl("https://www.perplexity.ai/rest/threads/abc/followup"), true);
   assert.equal(isAiStreamUrl("https://grok.com/rest/app-chat/conversations/xyz/responses"), true);
   assert.equal(isAiStreamUrl("https://api.kimi.com/ChatService/Chat"), true);
@@ -17,6 +19,102 @@ test("isAiStreamUrl correctly identifies AI stream endpoints", () => {
   assert.equal(isAiStreamUrl("https://cdn.example.com/assets/app.js"), false);
   assert.equal(isAiStreamUrl(""), false);
   assert.equal(isAiStreamUrl(null), false);
+});
+
+test("extractTextFromSseJson handles ChatGPT RFC 6902 JSON patch deltas", () => {
+  const state = { lastText: "" };
+
+  const chunk1 = {
+    o: "patch",
+    v: [{ p: "/message/content/parts/0", o: "append", v: "Halo" }]
+  };
+  const res1 = extractTextFromSseJson(chunk1, state);
+  assert.equal(res1.delta, "Halo");
+  assert.equal(res1.full, "Halo");
+
+  const chunk2 = {
+    p: "/message/content/parts/0",
+    o: "append",
+    v: " dunia!"
+  };
+  const res2 = extractTextFromSseJson(chunk2, state);
+  assert.equal(res2.delta, " dunia!");
+  assert.equal(res2.full, "Halo dunia!");
+});
+
+test("extractTextFromSseJson handles DeepSeek Web format", () => {
+  const state = { lastText: "" };
+
+  const chunk1 = {
+    v: {
+      response: {
+        fragments: [{ content: "H" }]
+      }
+    }
+  };
+  const res1 = extractTextFromSseJson(chunk1, state);
+  assert.equal(res1.delta, "H");
+  assert.equal(res1.full, "H");
+
+  const chunk2 = {
+    p: "response/fragments/-1/content",
+    o: "APPEND",
+    v: "alo"
+  };
+  const res2 = extractTextFromSseJson(chunk2, state);
+  assert.equal(res2.delta, "alo");
+  assert.equal(res2.full, "Halo");
+
+  const chunk3 = { v: "!" };
+  const res3 = extractTextFromSseJson(chunk3, state);
+  assert.equal(res3.delta, "!");
+  assert.equal(res3.full, "Halo!");
+});
+
+test("extractTextFromSseJson handles Xiaomi MiMo format and strips null bytes", () => {
+  const state = { lastText: "" };
+
+  const chunk1 = {
+    type: "text",
+    content: "<think>\u0000Thinking..."
+  };
+  const res1 = extractTextFromSseJson(chunk1, state);
+  assert.equal(res1.delta, "<think>Thinking...");
+  assert.equal(res1.full, "<think>Thinking...");
+
+  const chunk2 = {
+    type: "text",
+    content: "</think>\u0000Jawaban"
+  };
+  const res2 = extractTextFromSseJson(chunk2, state);
+  assert.equal(res2.delta, "</think>Jawaban");
+  assert.equal(res2.full, "<think>Thinking...</think>Jawaban");
+});
+
+test("isStreamCompleted detects completion signals across all platforms", () => {
+  // 1. Standard [DONE]
+  assert.equal(isStreamCompleted("[DONE]", null), true);
+
+  // 2. Xiaomi MiMo
+  assert.equal(isStreamCompleted('{"content":"[DONE]"}', { content: "[DONE]" }, "finish"), true);
+
+  // 3. DeepSeek
+  assert.equal(isStreamCompleted("", { p: "response/status", v: "FINISHED" }, "update_session"), true);
+  assert.equal(isStreamCompleted("", null, "close"), true);
+
+  // 4. Claude
+  assert.equal(isStreamCompleted("", { type: "message_stop" }, "message_stop"), true);
+  assert.equal(isStreamCompleted("", { delta: { stop_reason: "end_turn" } }), true);
+
+  // 5. ChatGPT
+  assert.equal(isStreamCompleted("", { type: "message_marker", marker: "last_token" }), true);
+  assert.equal(isStreamCompleted("", {
+    o: "patch",
+    v: [{ p: "/message/status", o: "replace", v: "finished_successfully" }]
+  }), true);
+
+  // Ongoing non-final chunk
+  assert.equal(isStreamCompleted('{"v":"halo"}', { v: "halo" }, "message"), false);
 });
 
 test("extractTextFromSseJson handles ChatGPT cumulative parts", () => {
