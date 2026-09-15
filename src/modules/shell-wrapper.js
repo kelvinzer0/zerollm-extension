@@ -1,12 +1,11 @@
 /**
- * ZeroLLM — Linux Shell Background & Tmux Wrapper Module
+ * ZeroLLM — Native Linux Shell Background Execution Wrapper
  * 
- * Automatically wraps long-running, daemon, or interactive shell tool commands:
- * - Checks `command -v tmux` dynamically at runtime.
- * - If tmux exists: runs in a detached headless tmux session (PTY, interactive, crash-proof).
- * - If tmux is absent: falls back to background subshell with logging and PID recording.
- * - Guarantees output is preserved in `/tmp/*.log` (never lost to /dev/null).
- * - Records PID and exit code for status tracking.
+ * Automatically wraps long-running, daemon, or background shell tool commands:
+ * - Pure, lightweight POSIX-compatible subshell backgrounding (no tmux dependency).
+ * - Preserves all stdout & stderr in `/tmp/zl_*.log` (never discarded to /dev/null).
+ * - Records PID ($!) and exit status code for reliable monitoring.
+ * - Emits clean JSON metadata so the caller/agent knows PID and log path instantly.
  */
 
 const SHELL_TOOL_NAMES = new Set([
@@ -53,7 +52,7 @@ export function shouldWrapCommand(fnName, argsObj = {}) {
     return true;
   }
 
-  // 2. Command matching long-running or interactive patterns
+  // 2. Command matching long-running or daemon patterns
   const cmd = (argsObj.command || argsObj.cmd || argsObj.input || "").trim();
   if (!cmd) return false;
 
@@ -61,7 +60,7 @@ export function shouldWrapCommand(fnName, argsObj = {}) {
 }
 
 /**
- * Wraps a raw shell command into a tmux-aware, PID-recording, log-preserving background executor.
+ * Wraps a raw shell command into a clean, log-preserving, PID-recording background executor.
  */
 export function wrapLinuxBackgroundCommand(rawCmd) {
   if (!rawCmd || typeof rawCmd !== "string") return rawCmd;
@@ -70,21 +69,12 @@ export function wrapLinuxBackgroundCommand(rawCmd) {
   // Strip trailing & if already present to prevent syntax conflicts
   cleaned = cleaned.replace(/&\s*$/, "").trim();
 
-  // Escape double quotes and backslashes for bash sub-string
-  const escapedCmd = cleaned.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\$/g, "\\$");
-
   return [
     'TASK_ID="zl_$(date +%s)_$RANDOM";',
     'LOG_FILE="/tmp/${TASK_ID}.log";',
     'EXIT_FILE="/tmp/${TASK_ID}.exit";',
-    'if command -v tmux >/dev/null 2>&1; then',
-    `tmux new-session -d -s "$TASK_ID" "(${escapedCmd}) > \\"$LOG_FILE\\" 2>&1; echo \\$? > \\"$EXIT_FILE\\"";`,
-    'PID=$(tmux list-panes -t "$TASK_ID" -F "#{pane_pid}");',
-    'echo "{\\"status\\":\\"running\\",\\"mode\\":\\"tmux\\",\\"session\\":\\"$TASK_ID\\",\\"pid\\":$PID,\\"log\\":\\"$LOG_FILE\\"}";',
-    'else',
     `( (${cleaned}) > "$LOG_FILE" 2>&1; echo $? > "$EXIT_FILE" ) & PID=$!;`,
-    'echo "{\\"status\\":\\"running\\",\\"mode\\":\\"subshell\\",\\"pid\\":$PID,\\"log\\":\\"$LOG_FILE\\"}";',
-    'fi'
+    'echo "{\\"status\\":\\"running\\",\\"pid\\":$PID,\\"log\\":\\"$LOG_FILE\\",\\"exit\\":\\"$EXIT_FILE\\"}";'
   ].join(" ");
 }
 

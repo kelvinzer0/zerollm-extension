@@ -31,14 +31,13 @@ test("shouldWrapCommand detects long running servers and daemon patterns", () =>
   assert.equal(shouldWrapCommand("read", { path: "main.py" }), false);
 });
 
-test("wrapLinuxBackgroundCommand generates valid tmux-aware wrapper", () => {
+test("wrapLinuxBackgroundCommand generates valid native background subshell wrapper", () => {
   const wrapped = wrapLinuxBackgroundCommand("npm run dev");
-  assert.ok(wrapped.includes("command -v tmux"));
-  assert.ok(wrapped.includes("tmux new-session -d -s"));
   assert.ok(wrapped.includes("LOG_FILE"));
   assert.ok(wrapped.includes("EXIT_FILE"));
   assert.ok(wrapped.includes("PID=$!"));
   assert.ok(wrapped.includes("status"));
+  assert.ok(!wrapped.includes("tmux"));
 });
 
 test("enrichToolCallsWithWrapper transforms qualifying commands while preserving sync commands", () => {
@@ -66,7 +65,8 @@ test("enrichToolCallsWithWrapper transforms qualifying commands while preserving
   // call_1 should be wrapped
   const args1 = JSON.parse(enriched[0].function.arguments);
   assert.equal(args1._wrapped_background, true);
-  assert.ok(args1.command.includes("command -v tmux"));
+  assert.ok(args1.command.includes("LOG_FILE"));
+  assert.ok(args1.command.includes("PID=$!"));
 
   // call_2 should remain untouched
   const args2 = JSON.parse(enriched[1].function.arguments);
