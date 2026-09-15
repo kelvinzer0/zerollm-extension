@@ -594,8 +594,47 @@ async function triggerSendOrEnter(modelConfig, inputEl = null) {
   return false;
 }
 
+// ── Stream Sniffer Interceptor Bridge (MAIN World -> ISOLATED ContentScript) ──
+let activeStreamSession = null;
+
+window.addEventListener("message", (event) => {
+  if (!event.data || event.data.source !== "zerollm_interceptor") return;
+
+  const { event: streamEvent, streamId, delta, fullText, error } = event.data;
+
+  if (!activeStreamSession) return;
+
+  if (streamEvent === "stream_start") {
+    activeStreamSession.hasReceivedStream = true;
+    console.log(`[ZeroLLM ContentScript] 🚀 Direct SSE Stream detected (#${streamId})`);
+  } else if (streamEvent === "stream_delta") {
+    activeStreamSession.hasReceivedStream = true;
+    activeStreamSession.streamStarted = true;
+    if (fullText) {
+      activeStreamSession.fullText = fullText;
+    }
+
+    if (delta && activeStreamSession.streamMode) {
+      chrome.runtime.sendMessage({
+        type: "stream",
+        requestId: activeStreamSession.requestId,
+        delta: { content: delta }
+      });
+    }
+  } else if (streamEvent === "stream_end") {
+    activeStreamSession.hasReceivedStream = true;
+    activeStreamSession.isCompleted = true;
+    if (fullText) {
+      activeStreamSession.fullText = fullText;
+    }
+    console.log(`[ZeroLLM ContentScript] ✅ Direct SSE Stream completed (#${streamId})`);
+  } else if (streamEvent === "stream_error") {
+    console.warn(`[ZeroLLM ContentScript] ⚠️ Direct SSE Stream error (#${streamId}):`, error);
+  }
+});
+
 /**
- * Observe live AI response stream in the DOM until completion
+ * Observe live AI response stream (Hybrid: Direct SSE Stream First -> DOM Fallback)
  */
 function observeCompletion(requestId, modelConfig, query, streamMode, initialCount = 0, initialText = "", isRetry = false) {
   return new Promise((resolve, reject) => {
@@ -605,8 +644,45 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
     let pollCount = 0;
     const maxPolls = 2000; // 300 seconds (5 minutes) max for deep reasoning & long research
 
+    // Sesi aktif stream interceptor untuk request saat ini
+    const streamSession = {
+      requestId,
+      streamMode,
+      streamStarted: false,
+      hasReceivedStream: false,
+      isCompleted: false,
+      fullText: ""
+    };
+    activeStreamSession = streamSession;
+
     const interval = setInterval(() => {
       pollCount++;
+
+      // ── METODE UTAMA: DIRECT SSE STREAM DARI INTERCEPTOR ──
+      if (streamSession.hasReceivedStream) {
+        if (streamSession.isCompleted && streamSession.fullText) {
+          clearInterval(interval);
+          activeStreamSession = null;
+          console.log(`[ZeroLLM StreamFirst] Completed via Direct SSE Stream (${streamSession.fullText.length} chars)`);
+          resolve(cleanResultMarkdown(streamSession.fullText));
+          return;
+        }
+
+        if (streamSession.streamStarted && !streamSession.isCompleted) {
+          if (pollCount >= maxPolls) {
+            clearInterval(interval);
+            activeStreamSession = null;
+            if (streamSession.fullText) {
+              resolve(cleanResultMarkdown(streamSession.fullText));
+            } else {
+              reject(new Error("Timeout during direct SSE stream reading"));
+            }
+          }
+          return;
+        }
+      }
+
+      // ── METODE CADANGAN: DOM OBSERVER (FALLBACK) ──
       // 1. DOM Positional Diffing: cari elemen respon yang berada setelah user prompt
       const diffEl = findAssistantResponseByDOMDiff(query, modelConfig);
 
@@ -715,6 +791,7 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
       const isDoneStreaming = !isStreaming || stableCount >= 10;
       if (streamStarted && hasMeaningfulText && !thinkingOnly && isDoneStreaming && stableCount >= 2 && pollCount >= 3) {
         clearInterval(interval);
+        activeStreamSession = null;
         console.log(`[ZeroLLM Monitor] Response completed successfully (${meaningfulMarkdown.length} chars)`);
         resolve(cleanResultMarkdown(lastMarkdown));
         return;
@@ -724,6 +801,7 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
       const hardTimeoutPolls = 2500; // ~375 detik batas absolut
       if ((pollCount >= maxPolls && !isStreaming) || pollCount >= hardTimeoutPolls) {
         clearInterval(interval);
+        activeStreamSession = null;
         if (lastMarkdown && hasMeaningfulText && !thinkingOnly) {
           console.log(`[ZeroLLM Monitor] Max polls reached, returning last stable text (${lastMarkdown.length} chars)`);
           resolve(cleanResultMarkdown(lastMarkdown));
