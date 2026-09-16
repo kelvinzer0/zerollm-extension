@@ -51,8 +51,8 @@ export const DEFAULT_PRESETS = [
     startChatSelector: "[contenteditable='true'], div.ProseMirror, textarea, [aria-label*='Chat Smith'], [placeholder*='Talk with Chat Smith']",
     continueChatSelector: "[contenteditable='true'], div.ProseMirror, textarea, [aria-label*='Chat Smith'], [placeholder*='Talk with Chat Smith']",
     streamSelector: "button[aria-label*='Stop'], button.stop-button, .streaming, .typing-indicator, [class*='stop'], button:has([class*='stop'])",
-    doneSelector: "button[aria-label*='Send']:not([disabled]), form button[type='submit']:not([disabled]), .send-button:not([disabled]), button.send-btn:not([disabled])",
-    resultContainerSelector: "div.prose, .prose, [class*='styles_tableMarkdown'], .message-ai .content, .chat-bubble-bot .text, .assistant-message, .message-content, [class*='bot-message'], [class*='ai-message'], .markdown",
+    doneSelector: "button[aria-label*='Send']:not([disabled]), button[class*='surface-action-primary']:not([disabled]), form button[type='submit']:not([disabled]), .send-button:not([disabled]), button.send-btn:not([disabled])",
+    resultContainerSelector: "article[data-align='left'] div.prose, article[data-align='left'], div.prose, .prose, [class*='styles_tableMarkdown'], .message-ai .content, .chat-bubble-bot .text, .assistant-message, .message-content, [class*='bot-message'], [class*='ai-message'], .markdown",
     description: "ChatSmith Web AI Interface (Verified Live)"
   },
   {

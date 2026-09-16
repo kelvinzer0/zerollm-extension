@@ -33,6 +33,8 @@
       /\/open-apis\/bot\/chat/i,
       // Qwen
       /\/api\/v\d+\/chat\/completions/i,
+      // VulcanLabs / ChatSmith (/agent-gateway-sse/api/v1/runs/.../stream)
+      /(?:vulcanlabs\.co|chatsmith\.io)\/.*(?:stream|runs)/i,
       // Perplexity
       /\/rest\/sse\/perplexity_ask/i,
       /\/rest\/threads\/[^/]+\/followup/i,
@@ -57,11 +59,14 @@
     if (payload === "[DONE]") return true;
 
     const ev = (currentEvent || "").toLowerCase();
-    if (ev === "finish" || ev === "close" || ev === "message_stop" || ev === "done" || ev === "end_of_stream" || ev === "sse_reply_end" || ev === "all_done") {
+    if (ev === "finish" || ev === "close" || ev === "message_stop" || ev === "done" || ev === "stream.done" || ev === "end_of_stream" || ev === "sse_reply_end" || ev === "all_done") {
       return true;
     }
 
     if (parsed && typeof parsed === "object") {
+      // VulcanLabs / ChatSmith
+      if (parsed.event_type === "stream.done" || parsed.event_type === "done") return true;
+
       // Grok
       if (parsed.result?.response?.modelResponse?.isComplete === true || parsed.result?.response?.isComplete === true) return true;
 
@@ -313,6 +318,58 @@
     return null;
   }
 
+  // Helper to dispatch SSE event payload to ZeroLLM content script
+  function dispatchEventPayload(payload, currentEvent, state, streamId, url, onCompleted) {
+    if (isStreamCompleted(payload, null, currentEvent)) {
+      onCompleted();
+      return;
+    }
+
+    let parsed = null;
+    try {
+      parsed = JSON.parse(payload);
+    } catch (e) {
+      parsed = null;
+    }
+
+    if (isStreamCompleted(payload, parsed, currentEvent)) {
+      onCompleted();
+      return;
+    }
+
+    if (parsed) {
+      const extracted = extractTextFromSseJson(parsed, state);
+      if (extracted && extracted.delta) {
+        window.postMessage(
+          {
+            source: "zerollm_interceptor",
+            event: "stream_delta",
+            streamId,
+            delta: extracted.delta,
+            fullText: extracted.full,
+            url
+          },
+          "*"
+        );
+      }
+    } else if (payload.length > 0 && !payload.startsWith("{")) {
+      // Raw text token (ChatSmith / VulcanLabs, plain text SSE)
+      // Preserves all whitespace, indentation, and newlines!
+      state.lastText += payload;
+      window.postMessage(
+        {
+          source: "zerollm_interceptor",
+          event: "stream_delta",
+          streamId,
+          delta: payload,
+          fullText: state.lastText,
+          url
+        },
+        "*"
+      );
+    }
+  }
+
   // ── 1. Fetch SSE Stream Interception ──
   async function processStreamForZeroLLM(stream, url) {
     const streamId = ++activeStreamCounter;
@@ -333,7 +390,23 @@
     let buffer = "";
     const state = { lastText: "" };
     let currentEvent = "";
+    let dataBuffer = "";
     let completed = false;
+
+    const handleCompleted = () => {
+      if (completed) return;
+      completed = true;
+      window.postMessage(
+        {
+          source: "zerollm_interceptor",
+          event: "stream_end",
+          streamId,
+          fullText: state.lastText,
+          url
+        },
+        "*"
+      );
+    };
 
     try {
       while (true) {
@@ -345,102 +418,53 @@
         buffer = lines.pop() || ""; // simpan sisa baris belum lengkap
 
         for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith(":")) continue; // komentar SSE
+          if (line === "") {
+            // W3C SSE standard: Blank line dispatches the accumulated event
+            if (dataBuffer.length > 0) {
+              const payload = dataBuffer.endsWith("\n") ? dataBuffer.slice(0, -1) : dataBuffer;
+              dataBuffer = "";
+              dispatchEventPayload(payload, currentEvent, state, streamId, url, handleCompleted);
+              currentEvent = "";
+              if (completed) return;
+            }
+            continue;
+          }
 
-          if (trimmed.startsWith("event:")) {
-            currentEvent = trimmed.slice(6).trim();
+          if (line.startsWith(":")) continue; // komentar SSE
+
+          if (line.startsWith("event:")) {
+            currentEvent = line.slice(6).replace(/^ /, "").trim();
             if (isStreamCompleted("", null, currentEvent)) {
-              completed = true;
-              window.postMessage(
-                {
-                  source: "zerollm_interceptor",
-                  event: "stream_end",
-                  streamId,
-                  fullText: state.lastText,
-                  url
-                },
-                "*"
-              );
+              handleCompleted();
               return;
             }
             continue;
           }
 
-          let payload = null;
-          if (trimmed.startsWith("data:")) {
-            payload = trimmed.slice(5).trim();
-          } else if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-            payload = trimmed;
+          if (line.startsWith("data:")) {
+            // W3C SSE standard: Strip only the single leading space after 'data:'
+            const val = line.slice(5).replace(/^ /, "");
+            dataBuffer += val + "\n";
+            continue;
           }
 
-          if (payload !== null) {
-            let parsed = null;
-            try {
-              parsed = JSON.parse(payload);
-            } catch (e) {
-              parsed = null;
-            }
-
-            if (isStreamCompleted(payload, parsed, currentEvent)) {
-              completed = true;
-              window.postMessage(
-                {
-                  source: "zerollm_interceptor",
-                  event: "stream_end",
-                  streamId,
-                  fullText: state.lastText,
-                  url
-                },
-                "*"
-              );
-              return;
-            }
-
-            if (parsed) {
-              const extracted = extractTextFromSseJson(parsed, state);
-              if (extracted && extracted.delta) {
-                window.postMessage(
-                  {
-                    source: "zerollm_interceptor",
-                    event: "stream_delta",
-                    streamId,
-                    delta: extracted.delta,
-                    fullText: extracted.full,
-                    url
-                  },
-                  "*"
-                );
-              }
-            } else if (payload && !payload.startsWith("{")) {
-              state.lastText += payload;
-              window.postMessage(
-                {
-                  source: "zerollm_interceptor",
-                  event: "stream_delta",
-                  streamId,
-                  delta: payload,
-                  fullText: state.lastText,
-                  url
-                },
-                "*"
-              );
-            }
+          // NDJSON lines (e.g. Grok, ChatGPT lat/r where line begins directly with { and ends with })
+          if (line.startsWith("{") && line.endsWith("}")) {
+            dispatchEventPayload(line, currentEvent, state, streamId, url, handleCompleted);
+            if (completed) return;
           }
         }
       }
 
+      // Flush any trailing event if stream closed without trailing newline
+      if (dataBuffer.length > 0 && !completed) {
+        const payload = dataBuffer.endsWith("\n") ? dataBuffer.slice(0, -1) : dataBuffer;
+        dataBuffer = "";
+        dispatchEventPayload(payload, currentEvent, state, streamId, url, handleCompleted);
+      }
+
       if (!completed) {
-        window.postMessage(
-          {
-            source: "zerollm_interceptor",
-            event: "stream_end",
-            streamId,
-            fullText: state.lastText,
-            url
-          },
-          "*"
-        );
+        handleCompleted();
         console.log(`[ZeroLLM Interceptor] ✅ AI fetch stream #${streamId} finished (${state.lastText.length} chars)`);
       }
     } catch (err) {
@@ -504,7 +528,24 @@
       let buffer = "";
       const state = { lastText: "" };
       let currentEvent = "";
+      let xhrDataBuffer = "";
       let completed = false;
+
+      const handleCompleted = () => {
+        if (completed) return;
+        completed = true;
+        window.postMessage(
+          {
+            source: "zerollm_interceptor",
+            event: "stream_end",
+            streamId,
+            fullText: state.lastText,
+            url
+          },
+          "*"
+        );
+        console.log(`[ZeroLLM Interceptor] ✅ AI XHR stream #${streamId} finished (${state.lastText.length} chars)`);
+      };
 
       const processXhrChunk = () => {
         try {
@@ -534,87 +575,37 @@
             buffer = lines.pop() || "";
 
             for (const line of lines) {
-              const trimmed = line.trim();
-              if (!trimmed || trimmed.startsWith(":")) continue;
+              if (line === "") {
+                if (xhrDataBuffer.length > 0) {
+                  const payload = xhrDataBuffer.endsWith("\n") ? xhrDataBuffer.slice(0, -1) : xhrDataBuffer;
+                  xhrDataBuffer = "";
+                  dispatchEventPayload(payload, currentEvent, state, streamId, url, handleCompleted);
+                  currentEvent = "";
+                  if (completed) return;
+                }
+                continue;
+              }
 
-              if (trimmed.startsWith("event:")) {
-                currentEvent = trimmed.slice(6).trim();
+              if (line.startsWith(":")) continue;
+
+              if (line.startsWith("event:")) {
+                currentEvent = line.slice(6).replace(/^ /, "").trim();
                 if (isStreamCompleted("", null, currentEvent)) {
-                  completed = true;
-                  window.postMessage(
-                    {
-                      source: "zerollm_interceptor",
-                      event: "stream_end",
-                      streamId,
-                      fullText: state.lastText,
-                      url
-                    },
-                    "*"
-                  );
+                  handleCompleted();
                   return;
                 }
                 continue;
               }
 
-              let payload = null;
-              if (trimmed.startsWith("data:")) {
-                payload = trimmed.slice(5).trim();
-              } else if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-                payload = trimmed;
+              if (line.startsWith("data:")) {
+                const val = line.slice(5).replace(/^ /, "");
+                xhrDataBuffer += val + "\n";
+                continue;
               }
 
-              if (payload !== null) {
-                let parsed = null;
-                try {
-                  parsed = JSON.parse(payload);
-                } catch (e) {
-                  parsed = null;
-                }
-
-                if (isStreamCompleted(payload, parsed, currentEvent)) {
-                  completed = true;
-                  window.postMessage(
-                    {
-                      source: "zerollm_interceptor",
-                      event: "stream_end",
-                      streamId,
-                      fullText: state.lastText,
-                      url
-                    },
-                    "*"
-                  );
-                  return;
-                }
-
-                if (parsed) {
-                  const extracted = extractTextFromSseJson(parsed, state);
-                  if (extracted && extracted.delta) {
-                    window.postMessage(
-                      {
-                        source: "zerollm_interceptor",
-                        event: "stream_delta",
-                        streamId,
-                        delta: extracted.delta,
-                        fullText: extracted.full,
-                        url
-                      },
-                      "*"
-                    );
-                  }
-                } else if (payload && !payload.startsWith("{")) {
-                  state.lastText += payload;
-                  window.postMessage(
-                    {
-                      source: "zerollm_interceptor",
-                      event: "stream_delta",
-                      streamId,
-                      delta: payload,
-                      fullText: state.lastText,
-                      url
-                    },
-                    "*"
-                  );
-                }
+              if (line.startsWith("{") && line.endsWith("}")) {
+                dispatchEventPayload(line, currentEvent, state, streamId, url, handleCompleted);
+                if (completed) return;
               }
             }
           }
@@ -631,19 +622,13 @@
       });
       this.addEventListener("load", () => {
         processXhrChunk();
+        if (xhrDataBuffer.length > 0 && !completed) {
+          const payload = xhrDataBuffer.endsWith("\n") ? xhrDataBuffer.slice(0, -1) : xhrDataBuffer;
+          xhrDataBuffer = "";
+          dispatchEventPayload(payload, currentEvent, state, streamId, url, handleCompleted);
+        }
         if (streamId && !completed) {
-          completed = true;
-          window.postMessage(
-            {
-              source: "zerollm_interceptor",
-              event: "stream_end",
-              streamId,
-              fullText: state.lastText,
-              url
-            },
-            "*"
-          );
-          console.log(`[ZeroLLM Interceptor] ✅ AI XHR stream #${streamId} finished (${state.lastText.length} chars)`);
+          handleCompleted();
         }
       });
       this.addEventListener("error", (err) => {

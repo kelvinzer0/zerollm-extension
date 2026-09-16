@@ -19,6 +19,8 @@ export function isAiStreamUrl(url) {
     /\/open-apis\/bot\/chat/i,
     // Qwen
     /\/api\/v\d+\/chat\/completions/i,
+    // VulcanLabs / ChatSmith (/agent-gateway-sse/api/v1/runs/.../stream)
+    /(?:vulcanlabs\.co|chatsmith\.io)\/.*(?:stream|runs)/i,
     // Perplexity
     /\/rest\/sse\/perplexity_ask/i,
     /\/rest\/threads\/[^/]+\/followup/i,
@@ -43,11 +45,14 @@ export function isStreamCompleted(payload, parsed, currentEvent = "") {
   if (payload === "[DONE]") return true;
 
   const ev = (currentEvent || "").toLowerCase();
-  if (ev === "finish" || ev === "close" || ev === "message_stop" || ev === "done" || ev === "end_of_stream" || ev === "sse_reply_end" || ev === "all_done") {
+  if (ev === "finish" || ev === "close" || ev === "message_stop" || ev === "done" || ev === "stream.done" || ev === "end_of_stream" || ev === "sse_reply_end" || ev === "all_done") {
     return true;
   }
 
   if (parsed && typeof parsed === "object") {
+    // VulcanLabs / ChatSmith
+    if (parsed.event_type === "stream.done" || parsed.event_type === "done") return true;
+
     // Grok
     if (parsed.result?.response?.modelResponse?.isComplete === true || parsed.result?.response?.isComplete === true) return true;
 

@@ -283,3 +283,14 @@ test("isAiStreamUrl ignores Grok list conversation queries and matches responses
   assert.equal(isAiStreamUrl("wss://notilo.kimi.ai/ws"), true);
 });
 
+test("isAiStreamUrl matches ChatSmith and VulcanLabs stream URLs", () => {
+  assert.equal(isAiStreamUrl("https://api.vulcanlabs.co/agent-gateway-sse/api/v1/runs/8f87e0a2-71dd-4ad8-af8d-dcfc7ca2f5cb/stream?ticket=01M2MVA1075H4F82KFWEGV3KJS"), true);
+  assert.equal(isAiStreamUrl("https://chatsmith.io/api/runs/123/stream"), true);
+});
+
+test("isStreamCompleted handles ChatSmith stream.done event and payload", () => {
+  assert.equal(isStreamCompleted("", null, "stream.done"), true);
+  assert.equal(isStreamCompleted("", { event_type: "stream.done" }, ""), true);
+  assert.equal(isStreamCompleted("", { event_type: "done" }, ""), true);
+});
+

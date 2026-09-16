@@ -44,6 +44,14 @@ function cleanHtmlToMarkdown(elementOrHtml) {
       case "h6": return `\n\n###### ${inner.trim()}\n\n`;
       case "p": return `\n\n${inner.trim()}\n\n`;
       case "br": return "\n";
+      case "div": {
+        if (!inner.trim()) return "";
+        const hasBlockChildren = Boolean(node.firstElementChild && node.querySelector("p, div, pre, blockquote, ul, ol, h1, h2, h3, h4, h5, h6, hr, table"));
+        if (hasBlockChildren) {
+          return inner;
+        }
+        return `\n\n${inner.trim()}\n\n`;
+      }
       case "strong":
       case "b": return `**${inner.trim()}**`;
       case "em":
