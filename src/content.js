@@ -793,6 +793,12 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
       }
 
       // ── METODE CADANGAN: DOM OBSERVER (FALLBACK) ──
+      // Berikan toleransi (grace period) 1.2 detik (8 polling @ 150ms) agar Network Stream Interceptor
+      // memiliki kesempatan menangkap paket stream pertama dari API sebelum DOM observer mulai membaca elemen
+      if (pollCount < 8 && !streamSession.hasReceivedStream) {
+        return;
+      }
+
       // 1. DOM Positional Diffing: cari elemen respon yang berada setelah user prompt
       const diffEl = findAssistantResponseByDOMDiff(query, modelConfig);
 
