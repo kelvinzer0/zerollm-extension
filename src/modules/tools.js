@@ -586,13 +586,13 @@ export function formatMessagesToPrompt(messages, tools = []) {
     toolDirective += "1. Mode Langsung (Chaining '&&'): Gabungkan perintah-perintah Linux yang berurutan atau saling berkaitan ke dalam satu perintah tunggal menggunakan operator '&&' (atau ';' / '|' jika relevan) untuk meminimalkan putaran giliran.\n";
     toolDirective += '   Contoh: <zerollm_tool_call name="exec">{"command": "cd /root/app && git pull && npm test"}</zerollm_tool_call>\n';
     toolDirective += "2. Mode Background / Daemon (Single Shell Environment): Shell dieksekusi secara sekuensial. Jangan biarkan proses jangka panjang (server, watcher, daemon) blocking/hang.\n";
-    toolDirective += "   Jika perlu restart atau menjalankan service di background, gunakan pola mandiri POSIX berikut:\n";
-    toolDirective += "   - Matikan proses sebelumnya yang serupa agar port tidak konflik: kill -9 <PID_LAMA> 2>/dev/null (atau pkill -f \"<nama_proses>\" 2>/dev/null)\n";
-    toolDirective += "   - Beri jeda 1 detik agar port rilis sempurna: sleep 1\n";
+    toolDirective += "   Jika perlu restart atau menjalankan service di background, Anda WAJIB menggunakan pola mandiri POSIX berikut agar terminal TIDAK HANG:\n";
+    toolDirective += "   - Gunakan 'pkill -9 -f' (bukan pkill biasa) atau 'kill -9' agar proses lama mati seketika tanpa menahan port.\n";
+    toolDirective += "   - Jeda rilis port: sleep 1\n";
     toolDirective += "   - Muat PATH binary environment ($HOME/.bun/bin, dll.) dan cd ke direktori proyek\n";
-    toolDirective += "   - Jalankan dengan nohup di background dan segera cetak PID ($!) agar tool langsung mengembalikan status sukses tanpa menunggu proses selesai\n";
-    toolDirective += "   Pola Standar: kill -9 <PID_SEBELUMNYA> 2>/dev/null; sleep 1; export PATH=\"$HOME/.bun/bin:$PATH\" && cd <dir_proyek> && nohup <COMMAND> > /dev/null 2>&1 & echo \"<nama_service> started PID: $!\"\n";
-    toolDirective += '   Contoh: <zerollm_tool_call name="exec">{"command": "pkill -f \\"node server.js\\" 2>/dev/null; sleep 1; export PATH=\\"$HOME/.bun/bin:$PATH\\" && cd /app && nohup node server.js > /dev/null 2>&1 & echo \\"App started PID: $!\\""}</zerollm_tool_call>\n';
+    toolDirective += "   - KRUSIAL: Putuskan input stdin dengan '</dev/null' dan lepaskan job dengan '& disown' agar runner terminal langsung exit dan tidak hang menunggu stream stdin/stdout.\n";
+    toolDirective += "   Pola Standar: pkill -9 -f \"<nama_proses>\" 2>/dev/null; sleep 1; export PATH=\"$HOME/.bun/bin:$PATH\" && cd <dir_proyek> && nohup <COMMAND> </dev/null >/dev/null 2>&1 & disown; echo \"<nama_service> started PID: $!\"\n";
+    toolDirective += '   Contoh: <zerollm_tool_call name="exec">{"command": "pkill -9 -f \\"node server.js\\" 2>/dev/null; sleep 1; export PATH=\\"$HOME/.bun/bin:$PATH\\" && cd /app && nohup node server.js </dev/null >/dev/null 2>&1 & disown; echo \\"App started PID: $!\\""}</zerollm_tool_call>\n';
     toolDirective += "3. Multi-Step Chaining: Anda bebas melanjutkan dengan pemanggilan tool berikutnya secara bertahap jika informasi belum lengkap.";
 
     systemParts.push(toolDirective);
@@ -620,7 +620,7 @@ export function formatMessagesToPrompt(messages, tools = []) {
     endGuidance += "1. Tahap 1 (Pemanggilan Tool): Jika pertanyaan pengguna membutuhkan data eksternal/fungsi di atas, JANGAN meminta maaf atau menolak dengan alasan tidak ada akses. Sistem ZeroLLM yang akan mengeksekusinya untuk Anda!\n";
     endGuidance += "   Anda WAJIB LANGSUNG membalas HANYA dengan tag pemanggilan tool:\n";
     endGuidance += '   <zerollm_tool_call name="nama_fungsi">{"parameter": "nilai"}</zerollm_tool_call>\n';
-    endGuidance += "   Untuk perintah shell: Gabungkan langkah terkait menggunakan '&&', atau gunakan 'background': true jika berupa proses daemon.\n";
+    endGuidance += "   Untuk perintah shell: Gabungkan langkah terkait menggunakan '&&'. Untuk daemon/server gunakan pola nohup </dev/null >/dev/null 2>&1 & disown agar shell tidak hang.\n";
   }
   if (hasToolResultInHistory) {
     endGuidance += "2. Tahap 2 (Evaluasi Hasil Tool & Multi-Step Execution):\n";
