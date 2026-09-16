@@ -26,8 +26,9 @@ function cleanHtmlToMarkdown(elementOrHtml) {
 
     const tag = node.tagName.toLowerCase();
     if (["script", "style", "noscript", "svg", "button", "iframe"].includes(tag)) return "";
+    if (node.matches && node.matches(".toolcall-flow, .thinking-container, .toolcall-container, .toolcall-content-text, .ds-think, [class*='thinking-container'], [class*='toolcall-container']")) return "";
     const role = node.getAttribute ? node.getAttribute("role") : null;
-    if (role === "button" && !inner.trim()) return "";
+    if (role === "button") return "";
 
     let inner = "";
     for (const child of node.childNodes) {
@@ -100,7 +101,7 @@ function cleanHtmlToMarkdown(elementOrHtml) {
     try {
       // Clone element agar tidak merusak live DOM dan bersihkan elemen UI tombol
       const clone = target.cloneNode(true);
-      clone.querySelectorAll("script, style, noscript, svg, button, [role='button'], .copy-btn, .action-btn").forEach(el => el.remove());
+      clone.querySelectorAll("script, style, noscript, svg, button, [role='button'], .copy-btn, .action-btn, .toolcall-flow, .thinking-container, .toolcall-container, .toolcall-content-text, .ds-think, [class*='thinking-container'], [class*='toolcall-container']").forEach(el => el.remove());
       const rawText = (clone.innerText || clone.textContent || "")
         .replace(/[\u200B-\u200D\uFEFF]/g, "")
         .trim();
@@ -198,6 +199,12 @@ function isValidResponseElement(el) {
 
   // Tolak elemen footer/disclaimer berdasarkan selector
   if (el.matches("footer, [class*='disclaimer'], [class*='footer'], [class*='bottom-bar'], [class*='legal'], [class*='copyright'], [class*='history'], [class*='sidebar']")) return false;
+
+  // Tolak jika elemen merupakan kontainer proses berpikir / toolcall
+  if (
+    el.matches(".toolcall-flow, .thinking-container, .toolcall-container, .toolcall-content-text, .ds-think, [class*='thinking-container'], [class*='toolcall-container']") ||
+    el.closest(".toolcall-flow, .thinking-container, .toolcall-container, .toolcall-content-text, .ds-think, [class*='thinking-container'], [class*='toolcall-container']")
+  ) return false;
 
   // Tolak jika merupakan pesan pengguna (user message)
   if (
@@ -348,7 +355,7 @@ function findAssistantResponseByDOMDiff(query, modelConfig) {
     const text = (el.innerText || el.textContent || "").replace(/[\u200B-\u200D\uFEFF\s]/g, "").toLowerCase();
     if (text.includes(sample)) {
       // Temukan kontainer turn pembungkus
-      userTurnEl = el.closest("article, [data-testid*='message'], [class*='message'], [class*='turn'], [class*='row'], [class*='item']") || el;
+      userTurnEl = el.closest("article, [data-testid*='message'], [class*='message'], [class*='turn'], [class*='row'], [class*='item'], .segment-user, [class*='segment']") || el;
       break;
     }
   }
@@ -360,7 +367,7 @@ function findAssistantResponseByDOMDiff(query, modelConfig) {
       if (isValidResponseElement(nextNode) && scope.contains(nextNode)) {
         return nextNode;
       }
-      const innerMessage = nextNode.querySelector(".markdown-prose, [class*='markdown-prose'], [class*='Markdown_markdown'], [class*='message-content'], article, [class*='message'], .markdown, div");
+      const innerMessage = nextNode.querySelector(".markdown-container:not(.toolcall-content-text), .markdown-prose, [class*='markdown-prose'], [class*='Markdown_markdown'], [class*='message-content'], article, [class*='message']:not([class*='user']), .markdown, p");
       if (innerMessage && isValidResponseElement(innerMessage) && scope.contains(innerMessage)) {
         return innerMessage;
       }
@@ -374,7 +381,7 @@ function findAssistantResponseByDOMDiff(query, modelConfig) {
         let sibling = parent.nextElementSibling;
         while (sibling) {
           if (isValidResponseElement(sibling) && scope.contains(sibling)) return sibling;
-          const inner = sibling.querySelector(".markdown-prose, [class*='markdown-prose'], [class*='Markdown_markdown'], [class*='message-content'], article, [class*='message'], .markdown, div");
+          const inner = sibling.querySelector(".markdown-container:not(.toolcall-content-text), .markdown-prose, [class*='markdown-prose'], [class*='Markdown_markdown'], [class*='message-content'], article, [class*='message']:not([class*='user']), .markdown, p");
           if (inner && isValidResponseElement(inner) && scope.contains(inner)) return inner;
           sibling = sibling.nextElementSibling;
         }
@@ -400,7 +407,7 @@ function checkIsDone(modelConfig) {
 function isThinkingOnly(text) {
   if (!text) return false;
   const cleaned = text.replace(/[\u200B-\u200D\uFEFF]/g, "").trim().toLowerCase();
-  return /^(mimo-v[0-9.]+(?:-[a-z0-9]+)?|thinking(\.{0,3}|…)?|thinking process(\.{0,3}|…)?|thinking completed|finished thinking|menalar(\.{0,3}|…)?|sedang berpikir(\.{0,3}|…)?|berhenti berpikir|stop thinking|berpikir(\.{0,3}|…)?|merenung(\.{0,3}|…)?|(?:berpikir|menalar|merenung)\s+selama\s+.*|thought\s+for\s+.*|已完成思考|思考过程)$/i.test(cleaned);
+  return /^(mimo-v[0-9.]+(?:-[a-z0-9]+)?|thinking(\.{0,3}|…)?|thinking process(\.{0,3}|…)?|thinking completed|finished thinking|menalar(\.{0,3}|…)?|sedang berpikir(\.{0,3}|…)?|berhenti berpikir|stop thinking|berpikir(\.{0,3}|…)?|merenung(\.{0,3}|…)?|selesai berpikir|(?:berpikir|menalar|merenung)\s+selama\s+.*|thought\s+for\s+.*|已完成思考|思考过程|思考结束)$/i.test(cleaned);
 }
 
 function cleanResultMarkdown(markdown) {
@@ -412,7 +419,7 @@ function cleanResultMarkdown(markdown) {
     // Hapus header accessibility & navigation Claude ("Chat Cowork", "Claude merespons:", ikon private Unicode)
     .replace(/^(?:#+\s*)?(?:Claude merespons:|Claude's response:|Claude:|Chat\s*Cowork|[\uE000-\uF8FF][^\n]*)\s*/gim, "")
     // Hapus header thinking Qwen, DeepSeek, ChatGPT, Claude (Merenung), Gemini, Xiaomi MiMo, dll
-    .replace(/^(?:#+\s*)?(?:Thinking completed|Thinking process|Thought process|Finished thinking|Thinking|Menalar|Merenung|Sedang berpikir|Berhenti berpikir|Stop thinking|已完成思考|思考过程)(?:\.{0,3}|…)?\s*(?:\n+|$)/gim, "")
+    .replace(/^(?:#+\s*)?(?:Thinking completed|Thinking process|Thought process|Finished thinking|Thinking|Menalar|Merenung|Sedang berpikir|Berhenti berpikir|Stop thinking|Selesai berpikir|已完成思考|思考过程|思考结束)(?:\.{0,3}|…)?\s*(?:\n+|$)/gim, "")
     .replace(/^(?:Berhenti berpikir|Stop thinking)\s*\n+/gim, "")
     .replace(/^(?:Berpikir|Menalar|Merenung)\s+selama\s+[^\n]+\n+/gim, "")
     .replace(/^(?:Thought for\s+[^\n]+)\n+/gim, "")
