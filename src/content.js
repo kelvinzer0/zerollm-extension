@@ -1210,4 +1210,29 @@ document.addEventListener("visibilitychange", () => {
 
 setupKeepAlivePort();
 
+/**
+ * Inject site-specific visual and DOM fixes
+ */
+function injectSiteSpecificFixes() {
+  if (typeof location === "undefined") return;
 
+  // ChatSmith: User message bubbles lack whitespace-pre-wrap, causing newlines to visually collapse into spaces
+  if (location.hostname.includes("chatsmith.io")) {
+    try {
+      const styleId = "zerollm-chatsmith-style-fix";
+      if (!document.getElementById(styleId)) {
+        const style = document.createElement("style");
+        style.id = styleId;
+        style.textContent = `
+          article[data-align='right'] p,
+          article[data-align='right'] div.max-w-full {
+            white-space: pre-wrap !important;
+          }
+        `;
+        (document.head || document.documentElement).appendChild(style);
+      }
+    } catch (_) {}
+  }
+}
+
+injectSiteSpecificFixes();
