@@ -16,7 +16,6 @@ import {
   stripZeroLlmTags,
   autoCloseToolTagsIfNeeded
 } from "./modules/tools.js";
-import { enrichToolCallsWithWrapper } from "./modules/shell-wrapper.js";
 import { nativeTypeAndSend } from "./modules/cdp.js";
 import {
   acquireWorkerTab,
@@ -464,8 +463,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       deleteStreamBuffer(msg.requestId);
       const textToProcess = autoCloseToolTagsIfNeeded(msg.content);
       const cleanContent = stripZeroLlmTags(textToProcess);
-      const rawToolCalls = parseToolCalls(textToProcess);
-      const toolCalls = rawToolCalls ? enrichToolCallsWithWrapper(rawToolCalls) : null;
+      const toolCalls = parseToolCalls(textToProcess);
 
       if (toolCalls && toolCalls.length > 0) {
         const textWithoutToolCalls = cleanContent
