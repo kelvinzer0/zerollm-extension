@@ -407,13 +407,15 @@ function checkIsDone(modelConfig) {
 function isThinkingOnly(text) {
   if (!text) return false;
   const cleaned = text.replace(/[\u200B-\u200D\uFEFF]/g, "").trim().toLowerCase();
-  return /^(mimo-v[0-9.]+(?:-[a-z0-9]+)?|thinking(\.{0,3}|…)?|thinking process(\.{0,3}|…)?|thinking completed|finished thinking|menalar(\.{0,3}|…)?|sedang berpikir(\.{0,3}|…)?|berhenti berpikir|stop thinking|berpikir(\.{0,3}|…)?|merenung(\.{0,3}|…)?|selesai berpikir|(?:berpikir|menalar|merenung)\s+selama\s+.*|thought\s+for\s+.*|已完成思考|思考过程|思考结束)$/i.test(cleaned);
+  return /^(mimo-v[0-9.]+(?:-[a-z0-9]+)?|thinking(\.{0,3}|…)?|thinking process(\.{0,3}|…)?|thinking completed|finished thinking|menalar(\.{0,3}|…)?|sedang berpikir(\.{0,3}|…)?|berhenti berpikir|stop thinking|berpikir(\.{0,3}|…)?|merenung(\.{0,3}|…)?|selesai berpikir|(?:berpikir|menalar|merenung)\s+selama\s+.*|thought\s+for\s+.*|已完成思考|思考过程|思考结束|pikir\s*mendalam\s*pencarian\s*cerdas|pikir\s*mendalam|pencarian\s*cerdas|deepthink|deepthink\s*\(r1\)|search|深度思考|联网搜索)$/i.test(cleaned);
 }
 
 function cleanResultMarkdown(markdown) {
   if (!markdown) return "";
   let cleaned = markdown
     .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    // Hapus tombol / toggle UI DeepSeek ("Pikir Mendalam", "Pencarian Cerdas", "DeepThink", "Search")
+    .replace(/^(?:Pikir\s*Mendalam|Pencarian\s*Cerdas|DeepThink(?:\s*\(?R1\)?)?|Search|深度思考(?:（R1）)?|联网搜索)\s*(?:Pikir\s*Mendalam|Pencarian\s*Cerdas|DeepThink(?:\s*\(?R1\)?)?|Search|深度思考(?:（R1）)?|联网搜索)?\s*/gim, "")
     // Hapus header accessibility ChatGPT ("#### ChatGPT bilang:")
     .replace(/^(?:#+\s*)?(?:ChatGPT bilang:|ChatGPT's response:|ChatGPT:|Anda bilang:[^\n]*)\s*/gim, "")
     // Hapus header accessibility & navigation Claude ("Chat Cowork", "Claude merespons:", ikon private Unicode)
