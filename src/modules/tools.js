@@ -585,10 +585,14 @@ export function formatMessagesToPrompt(messages, tools = []) {
     toolDirective += "Jika Anda menggunakan tool yang berhubungan dengan shell/terminal (seperti exec, bash, terminal, dll.):\n";
     toolDirective += "1. Mode Langsung (Chaining '&&'): Gabungkan perintah-perintah Linux yang berurutan atau saling berkaitan ke dalam satu perintah tunggal menggunakan operator '&&' (atau ';' / '|' jika relevan) untuk meminimalkan putaran giliran.\n";
     toolDirective += '   Contoh: <zerollm_tool_call name="exec">{"command": "cd /root/app && git pull && npm test"}</zerollm_tool_call>\n';
-    toolDirective += "2. Mode Background / Daemon: Jika perintah berupa proses jangka panjang, web server, service, watcher, atau build yang memakan waktu:\n";
-    toolDirective += "   - Gunakan parameter \"background\": true jika tool mendukungnya (seperti OpenClaw exec).\n";
-    toolDirective += "   - Atau jalankan di background melalui shell (contoh: nohup ... > output.log 2>&1 &).\n";
-    toolDirective += '   Contoh: <zerollm_tool_call name="exec">{"command": "npm start", "background": true}</zerollm_tool_call>\n';
+    toolDirective += "2. Mode Background / Daemon (Single Shell Environment): Shell dieksekusi secara sekuensial. Jangan biarkan proses jangka panjang (server, watcher, daemon) blocking/hang.\n";
+    toolDirective += "   Jika perlu restart atau menjalankan service di background, gunakan pola mandiri POSIX berikut:\n";
+    toolDirective += "   - Matikan proses sebelumnya yang serupa agar port tidak konflik: kill -9 <PID_LAMA> 2>/dev/null (atau pkill -f \"<nama_proses>\" 2>/dev/null)\n";
+    toolDirective += "   - Beri jeda 1 detik agar port rilis sempurna: sleep 1\n";
+    toolDirective += "   - Muat PATH binary environment ($HOME/.bun/bin, dll.) dan cd ke direktori proyek\n";
+    toolDirective += "   - Jalankan dengan nohup di background dan segera cetak PID ($!) agar tool langsung mengembalikan status sukses tanpa menunggu proses selesai\n";
+    toolDirective += "   Pola Standar: kill -9 <PID_SEBELUMNYA> 2>/dev/null; sleep 1; export PATH=\"$HOME/.bun/bin:$PATH\" && cd <dir_proyek> && nohup <COMMAND> > /dev/null 2>&1 & echo \"<nama_service> started PID: $!\"\n";
+    toolDirective += '   Contoh: <zerollm_tool_call name="exec">{"command": "pkill -f \\"node server.js\\" 2>/dev/null; sleep 1; export PATH=\\"$HOME/.bun/bin:$PATH\\" && cd /app && nohup node server.js > /dev/null 2>&1 & echo \\"App started PID: $!\\""}</zerollm_tool_call>\n';
     toolDirective += "3. Multi-Step Chaining: Anda bebas melanjutkan dengan pemanggilan tool berikutnya secara bertahap jika informasi belum lengkap.";
 
     systemParts.push(toolDirective);
