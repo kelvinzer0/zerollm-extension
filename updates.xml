@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <gupdate xmlns="http://www.google.com/update2/response" protocol="2.0">
   <app appid="gfmcdkdhkghhaogadkagbeihnhpnkddd">
-    <updatecheck codebase="https://github.com/kelvinzer0/zerollm-extension/releases/latest/download/zerollm-extension.crx" version="1.42.0" prodversionmin="64.0.3242" />
+    <updatecheck codebase="https://github.com/kelvinzer0/zerollm-extension/releases/latest/download/zerollm-extension.crx" version="1.42.1" prodversionmin="64.0.3242" />
   </app>
 </gupdate>
