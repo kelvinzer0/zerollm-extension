@@ -146,8 +146,8 @@ export const DEFAULT_PRESETS = [
     newChatSelector: "[aria-label*='Obrolan baru'], [aria-label*='新对话'], [aria-label*='New chat'], a[href*='new_chat'], button:has-text('新对话'), button:has-text('Obrolan baru')",
     startChatSelector: "div.chat-input-editor, [contenteditable='true'], div.ProseMirror, textarea[placeholder], textarea",
     continueChatSelector: "div.chat-input-editor, [contenteditable='true'], div.ProseMirror, textarea[placeholder], textarea",
-    streamSelector: "div.send-button-container:has(svg[name='stop']), svg[name='stop'], .stop-icon, button[class*='stop'], [aria-label*='Stop'], [class*='stopGenerating']",
-    doneSelector: "div.send-button-container:not(.disabled):not(:has(svg[name='stop'])), div.send-button-container:has(svg[name='Send']), button[class*='send']:not([disabled]), button[type='submit']:not([disabled]), div[class*='sendBtn']:not([disabled])",
+    streamSelector: "div.send-button-container:has(svg[name='stop' i]), svg[name='stop' i], .stop-icon, button[class*='stop'], [aria-label*='Stop' i], [class*='stopGenerating']",
+    doneSelector: "div.send-button-container:not(.disabled):not(:has(svg[name='stop' i])), div.send-button-container:has(svg[name='Send' i]), button[class*='send']:not([disabled]), button[type='submit']:not([disabled]), div[class*='sendBtn']:not([disabled])",
     resultContainerSelector: ".segment-assistant .segment-content-box .markdown-container:not(.toolcall-content-text), .segment-assistant:not(:has(.markdown-container)) .segment-content-box, [class*='markdownContent'], .markdown",
     description: "Moonshot Kimi AI Web Interface (kimi.ai & moonshot.cn)"
   },

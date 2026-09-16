@@ -477,9 +477,19 @@ function checkIsStreaming(modelConfig) {
     return true;
   }
 
+  // Deteksi status berpikir aktif (seperti Kimi, DeepSeek R1, Grok saat merenung/berpikir)
+  const thinkingActive = document.querySelector(".thinking-container, [class*='thinking-container'], .toolcall-flow, .ds-think");
+  if (thinkingActive && (thinkingActive.offsetParent !== null || window.getComputedStyle(thinkingActive).display !== "none")) {
+    const tText = (thinkingActive.innerText || thinkingActive.textContent || "").toLowerCase();
+    if ((tText.includes("berpikir") || tText.includes("thinking") || tText.includes("menalar")) &&
+        !tText.includes("selesai berpikir") && !tText.includes("thinking completed") && !tText.includes("finished thinking") && !tText.includes("已完成思考") && !tText.includes("思考结束")) {
+      return true;
+    }
+  }
+
   const genericStream = document.querySelector(
     ".streaming, [data-is-streaming='true'], .typing-indicator, [class*='streaming'], [class*='typing'], " +
-    "button[aria-label*='Stop' i], button[aria-label*='Berhenti' i], button[aria-label*='停止']"
+    "svg[name='stop' i], button[aria-label*='Stop' i], button[aria-label*='Berhenti' i], button[aria-label*='停止']"
   );
   if (genericStream && (genericStream.offsetParent !== null || window.getComputedStyle(genericStream).display !== "none")) {
     return true;
@@ -832,9 +842,9 @@ function observeCompletion(requestId, modelConfig, query, streamMode, initialCou
       }
 
       // ── DETEKSI AI BENGONG -> AUTO NEW CHAT & RETRY ──
-      // Jika setelah 12 detik (80 polls @ 150ms) belum ada respon mengalir sama sekali
-      if (!isRetry && pollCount === 80 && !streamStarted && !isStreaming) {
-        console.warn("[ZeroLLM Fallback] AI tidak merespon (bengong) setelah 12.5 detik. Membuka Obrolan Baru & mengulang...");
+      // Jika setelah 30 detik (200 polls @ 150ms) belum ada respon mengalir sama sekali
+      if (!isRetry && pollCount === 200 && !streamStarted && !isStreaming) {
+        console.warn("[ZeroLLM Fallback] AI tidak merespon (bengong) setelah 30 detik. Membuka Obrolan Baru & mengulang...");
         
         // Coba picu tombol submit/enter sekali lagi
         triggerSendOrEnter(modelConfig);
