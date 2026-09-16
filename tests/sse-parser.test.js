@@ -248,3 +248,38 @@ test("extractTextFromSseJson handles Perplexity diff_block patches and workflow_
   assert.equal(res2.full, "Halo Perplexity AI!");
 });
 
+test("extractTextFromSseJson handles Grok NDJSON token and message format", () => {
+  const state = { lastText: "" };
+
+  const chunk1 = {
+    result: {
+      response: {
+        token: "Hello"
+      }
+    }
+  };
+  const res1 = extractTextFromSseJson(chunk1, state);
+  assert.equal(res1.delta, "Hello");
+  assert.equal(res1.full, "Hello");
+
+  const chunk2 = {
+    result: {
+      response: {
+        token: " from Grok!"
+      }
+    }
+  };
+  const res2 = extractTextFromSseJson(chunk2, state);
+  assert.equal(res2.delta, " from Grok!");
+  assert.equal(res2.full, "Hello from Grok!");
+});
+
+test("isAiStreamUrl ignores Grok list conversation queries and matches responses", () => {
+  assert.equal(isAiStreamUrl("https://grok.com/rest/app-chat/conversations?pageSize=60"), false);
+  assert.equal(isAiStreamUrl("https://grok.com/rest/app-chat/conversations?pageSize=60&excludeProjects=true"), false);
+  assert.equal(isAiStreamUrl("https://grok.com/rest/app-chat/conversations/xyz/load-responses"), false);
+  assert.equal(isAiStreamUrl("https://grok.com/rest/app-chat/conversations/xyz/responses"), true);
+  assert.equal(isAiStreamUrl("https://grok.com/rest/app-chat/conversations/xyz/response-node"), true);
+  assert.equal(isAiStreamUrl("wss://notilo.kimi.ai/ws"), true);
+});
+

@@ -4,6 +4,10 @@
 
 export function isAiStreamUrl(url) {
   if (!url || typeof url !== "string") return false;
+  // Ignore non-stream list/metadata queries
+  if (/[?&](?:pageSize|filterIsStarred|excludeProjects)=/i.test(url)) return false;
+  if (/\/load-responses|\/sharing\?/i.test(url)) return false;
+
   const patterns = [
     // ChatGPT (handles /backend-api/conversation, /backend-api/f/conversation, /backend-api/lat/r)
     /\/backend-api\/(?:[a-z0-9_-]+\/)?(?:conversation|lat\/r)/i,
@@ -20,15 +24,17 @@ export function isAiStreamUrl(url) {
     /\/rest\/threads\/[^/]+\/followup/i,
     /\/rest\/sse\//i,
     // Grok
-    /\/rest\/app-chat\/conversations\/[^/]+\/responses/i,
+    /\/rest\/app-chat\/conversations\/[^/]+\/(?:responses|response-node)/i,
     // Dola AI / Doubao (/chat/completion, /api/chat, /ChatService/Chat)
     /\/chat\/completion/i,
     /\/api\/chat/i,
     /\/ChatService\/Chat/i,
     // ChatGLM / Zhipu AI
     /\/chatglm\/(?:mainchat|backend|chat)-api\//i,
+    // WebSocket endpoints (Kimi, Poe, Copilot)
+    /(?:kimi\.ai|moonshot\.cn|poe\.com|sydney\.bing\.com)\/.*(?:ws|ChatHub)/i,
     // General heuristic
-    /(?:conversation|completions|chat_stream|chat\/stream)/i
+    /(?:chat_stream|chat\/stream|chat\/completions)/i
   ];
   return patterns.some((p) => p.test(url));
 }
@@ -37,11 +43,17 @@ export function isStreamCompleted(payload, parsed, currentEvent = "") {
   if (payload === "[DONE]") return true;
 
   const ev = (currentEvent || "").toLowerCase();
-  if (ev === "finish" || ev === "close" || ev === "message_stop" || ev === "done" || ev === "end_of_stream" || ev === "sse_reply_end") {
+  if (ev === "finish" || ev === "close" || ev === "message_stop" || ev === "done" || ev === "end_of_stream" || ev === "sse_reply_end" || ev === "all_done") {
     return true;
   }
 
   if (parsed && typeof parsed === "object") {
+    // Grok
+    if (parsed.result?.response?.modelResponse?.isComplete === true || parsed.result?.response?.isComplete === true) return true;
+
+    // Kimi WebSocket
+    if (parsed.event === "all_done" || parsed.event === "finish") return true;
+
     // Perplexity
     if (parsed.final_sse_message === true || parsed.final === true) return true;
     if (parsed.text_completed === true && parsed.status === "COMPLETED") return true;
@@ -253,7 +265,26 @@ export function extractTextFromSseJson(dataObj, state = { lastText: "" }) {
     }
   }
 
-  // 10. Generic text / content field
+  // 10. Grok web format (NDJSON / result.response.token or result.response.modelResponse)
+  if (dataObj.result && typeof dataObj.result === "object") {
+    const res = dataObj.result.response;
+    if (res && typeof res === "object") {
+      if (typeof res.token === "string" && res.token) {
+        state.lastText += res.token;
+        return { delta: res.token, full: state.lastText };
+      }
+      const msg = res.modelResponse?.message || res.message;
+      if (typeof msg === "string" && msg) {
+        const delta = msg.startsWith(state.lastText)
+          ? msg.slice(state.lastText.length)
+          : (msg === state.lastText ? "" : msg);
+        state.lastText = msg;
+        return { delta, full: state.lastText };
+      }
+    }
+  }
+
+  // 11. Generic text / content field
   if (typeof dataObj.text === "string") {
     const delta = dataObj.text;
     state.lastText += delta;

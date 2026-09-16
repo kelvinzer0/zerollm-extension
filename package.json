@@ -1,6 +1,6 @@
 {
   "name": "zerollm-extension",
-  "version": "1.40.1",
+  "version": "1.42.0",
   "description": "Turn any web AI chatbot into an OpenAI-compatible LLM endpoint with multi-tab orchestration and regex mapping",
   "type": "module",
   "scripts": {
