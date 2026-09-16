@@ -43,6 +43,7 @@ import {
   configureBridge,
   broadcastBridgeState
 } from "./modules/bridge.js";
+import { initAutoUpdater, checkGitHubRelease } from "./modules/updater.js";
 import { setMediaBlocker } from "./modules/media-blocker.js";
 
 // Models state & execution mode
@@ -579,6 +580,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return false;
     }
 
+    case "checkUpdate": {
+      checkGitHubRelease().then(info => {
+        sendResponse({ updateInfo: info });
+      }).catch(err => {
+        sendResponse({ error: err.message });
+      });
+      return true;
+    }
+
     default:
       return false;
   }
@@ -630,6 +640,9 @@ try {
         syncModelsToBridge(models);
       }
     }
+    if (alarm.name === "check-zerollm-update") {
+      checkGitHubRelease();
+    }
   });
 } catch (e) {}
 
@@ -640,4 +653,5 @@ loadModels().then(async () => {
     connectBridge(bState.bridgeUrl, bState.roomId, bState.apiKey, true, () => models);
   }
   autoAttachExistingTabs(models).catch(() => {});
+  initAutoUpdater();
 });

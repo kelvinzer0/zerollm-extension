@@ -306,11 +306,33 @@
       <h1>ZeroLLM</h1>
       <span class="badge">OpenAI v1</span>
     </div>
-    <div class="status-pill">
-      <div class="dot disconnected" id="connDot"></div>
-      <span id="connText">Disconnected</span>
+    <div style="display: flex; align-items: center; gap: 6px;">
+      <button id="btnCheckUpdate" title="Periksa Pembaruan GitHub" style="background: none; border: 1px solid var(--border); border-radius: 20px; color: var(--text-muted); padding: 3px 8px; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+        <span>🔄</span> <span id="btnCheckUpdateText">Cek Update</span>
+      </button>
+      <div class="status-pill">
+        <div class="dot disconnected" id="connDot"></div>
+        <span id="connText">Disconnected</span>
+      </div>
     </div>
   </header>
+
+  <!-- AUTO-UPDATE NOTIFICATION BANNER -->
+  <div id="updateBanner" style="display: none; background: linear-gradient(135deg, rgba(37,99,235,0.2), rgba(16,185,129,0.15)); border: 1px solid var(--primary); border-radius: var(--radius); padding: 9px 12px; margin-bottom: 12px; align-items: center; justify-content: space-between; gap: 8px;">
+    <div style="flex: 1;">
+      <div style="font-weight: 600; font-size: 12px; color: #fff; display: flex; align-items: center; gap: 6px;">
+        <span>🚀 Update Tersedia: <strong id="updateVersion" style="color: #60a5fa;">v...</strong></span>
+      </div>
+      <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;" id="updateDesc">
+        Pembaruan fitur & perbaikan stream AI terbaru telah dirilis di GitHub.
+      </div>
+    </div>
+    <div style="display: flex; gap: 6px;">
+      <a id="btnDownloadUpdate" href="#" target="_blank" class="btn btn-primary" style="padding: 4px 10px; font-size: 11px; text-decoration: none; display: inline-flex; align-items: center; gap: 4px;">
+        ⬇️ Download ZIP
+      </a>
+    </div>
+  </div>
 
   <nav class="tabs-nav">
     <button class="tab-btn active" data-tab="models">🤖 Models</button>

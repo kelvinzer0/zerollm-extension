@@ -72,7 +72,8 @@ jobs:
           npm run check
           npm test
 
-      - name: Package Extension ZIP
+      - name: Package Extension ZIP & CRX3
+        id: package
         run: |
           ZIP_NAME="zerollm-extension-${{ steps.versioning.outputs.tag }}.zip"
           zip -r "$ZIP_NAME" \
@@ -80,17 +81,36 @@ jobs:
             icons/ \
             lib/ \
             src/ \
+            scripts/ \
             README.md \
             -x "*.git*"
           echo "zip_name=$ZIP_NAME" >> $GITHUB_OUTPUT
-        id: package
+
+          # Package signed CRX3 and update manifest XML using persistent key
+          cat "$ZIP_NAME" | npx --yes crx3 \
+            -p zerollm-key.pem \
+            -o zerollm-extension.crx \
+            -x updates.xml \
+            --appVersion "${{ steps.versioning.outputs.version }}" \
+            --crxURL "https://github.com/kelvinzer0/zerollm-extension/releases/latest/download/zerollm-extension.crx"
+
+      - name: Commit Updated updates.xml
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add updates.xml manifest.json
+          git diff-index --quiet HEAD || git commit -m "chore(release): update updates.xml for ${{ steps.versioning.outputs.tag }} [skip ci]"
+          git push origin main || echo "Skipping push"
 
       - name: Create GitHub Release with User Guide
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.versioning.outputs.tag }}
           name: "Release ${{ steps.versioning.outputs.tag }} 🚀"
-          files: ${{ steps.package.outputs.zip_name }}
+          files: |
+            ${{ steps.package.outputs.zip_name }}
+            zerollm-extension.crx
+            updates.xml
           body: |
             # ⚡ ZeroLLM Extension ${{ steps.versioning.outputs.tag }}
 

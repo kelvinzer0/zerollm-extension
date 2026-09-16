@@ -436,3 +436,59 @@ chrome.runtime.onMessage.addListener((msg) => {
     updateState(msg.state);
   }
 });
+
+// ── Update Notification Logic ─────────────────────────────────────────
+const updateBanner = document.getElementById("updateBanner");
+const updateVersion = document.getElementById("updateVersion");
+const updateDesc = document.getElementById("updateDesc");
+const btnDownloadUpdate = document.getElementById("btnDownloadUpdate");
+const btnCheckUpdate = document.getElementById("btnCheckUpdate");
+const btnCheckUpdateText = document.getElementById("btnCheckUpdateText");
+
+function renderUpdateInfo(updateInfo) {
+  if (!updateBanner) return;
+  if (updateInfo && updateInfo.hasUpdate) {
+    updateBanner.style.display = "flex";
+    if (updateVersion) updateVersion.textContent = updateInfo.latestTag || `v${updateInfo.latestVersion}`;
+    if (updateDesc && updateInfo.releaseNotes) {
+      updateDesc.textContent = updateInfo.releaseNotes.replace(/[#*`_]/g, "").slice(0, 90) + "...";
+    }
+    if (btnDownloadUpdate) {
+      btnDownloadUpdate.href = updateInfo.zipUrl || updateInfo.releaseUrl;
+    }
+  } else {
+    updateBanner.style.display = "none";
+  }
+}
+
+chrome.storage.local.get(["updateInfo"], (data) => {
+  if (data.updateInfo) {
+    renderUpdateInfo(data.updateInfo);
+  }
+});
+
+if (btnCheckUpdate) {
+  btnCheckUpdate.addEventListener("click", () => {
+    if (btnCheckUpdateText) btnCheckUpdateText.textContent = "Mengecek...";
+    chrome.runtime.sendMessage({ type: "checkUpdate" }, (res) => {
+      const _ = chrome.runtime.lastError;
+      if (res?.updateInfo) {
+        renderUpdateInfo(res.updateInfo);
+        if (res.updateInfo.hasUpdate) {
+          if (btnCheckUpdateText) btnCheckUpdateText.textContent = "Ada Update!";
+        } else {
+          if (btnCheckUpdateText) btnCheckUpdateText.textContent = "Terbaru ✓";
+          setTimeout(() => {
+            if (btnCheckUpdateText) btnCheckUpdateText.textContent = "Cek Update";
+          }, 2000);
+        }
+      } else {
+        if (btnCheckUpdateText) btnCheckUpdateText.textContent = "Gagal Cek";
+        setTimeout(() => {
+          if (btnCheckUpdateText) btnCheckUpdateText.textContent = "Cek Update";
+        }, 2000);
+      }
+    });
+  });
+}
+

@@ -3,6 +3,7 @@
   "name": "ZeroLLM — Universal Web-to-LLM Bridge",
   "version": "1.40.1",
   "description": "Turn any web AI chatbot (ChatGPT, ChatSmith, Claude, etc.) into an OpenAI-compatible LLM endpoint with multi-tab orchestration and regex mapping.",
+  "update_url": "https://raw.githubusercontent.com/kelvinzer0/zerollm-extension/main/updates.xml",
   "permissions": [
     "activeTab",
     "tabs",
@@ -10,6 +11,7 @@
     "storage",
     "debugger",
     "alarms",
+    "notifications",
     "declarativeNetRequest"
   ],
   "host_permissions": [
