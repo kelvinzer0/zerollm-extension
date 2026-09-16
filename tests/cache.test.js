@@ -72,3 +72,17 @@ test("processStreamDelta preserves normal text with mathematical <", () => {
   assert.equal(res, "Nilai x < 5 dan y > 2 selesai");
 });
 
+test("processStreamDelta suppresses DeepSeek DSML blocks during streaming", () => {
+  const reqId = "test_req_5";
+  deleteStreamBuffer(reqId);
+
+  // Chunk 1: Normal preamble text then starts DSML tag
+  const c1 = processStreamDelta(reqId, "Saya akan cek proses. <｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"bash\">\n<｜｜DSML｜｜ parameter");
+  assert.equal(c1, "Saya akan cek proses. ");
+
+  // Chunk 2: Finishes DSML block then post text
+  const c2 = processStreamDelta(reqId, ' name="command" string="true">ps aux</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls> Tunggu sebentar...');
+  assert.equal(c2, " Tunggu sebentar...");
+});
+
+

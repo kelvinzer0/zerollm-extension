@@ -15,7 +15,8 @@ import {
   formatMessagesToPrompt,
   parseToolCalls,
   stripZeroLlmTags,
-  autoCloseToolTagsIfNeeded
+  autoCloseToolTagsIfNeeded,
+  repackDsmlToZeroLlm
 } from "./modules/tools.js";
 import { nativeTypeAndSend } from "./modules/cdp.js";
 import {
@@ -469,7 +470,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           delta: { content: leftover }
         });
       }
-      const textToProcess = autoCloseToolTagsIfNeeded(msg.content);
+      const repackedContent = repackDsmlToZeroLlm(msg.content);
+      const textToProcess = autoCloseToolTagsIfNeeded(repackedContent);
       const cleanContent = stripZeroLlmTags(textToProcess);
       const toolCalls = parseToolCalls(textToProcess);
 
@@ -479,6 +481,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           .replace(/<tool_call[^>]*?>[\s\S]*?<\/tool_call>/gi, "")
           .replace(/\[(?:ACTION|PANGGIL_FUNGSI|TOOL|CALL):[\s\S]*?\]/gi, "")
           .replace(/<(?:function|invoke)[^>]*?>[\s\S]*?<\/(?:function|invoke)>/gi, "")
+          .replace(/<[|｜\s]*dsml[|｜\s]*calls[^>]*>[\s\S]*?<\/[|｜\s]*dsml[|｜\s]*calls>/gi, "")
+          .replace(/<[|｜\s]*dsml[|｜\s]*invoke[^>]*>[\s\S]*?<\/[|｜\s]*dsml[|｜\s]*invoke>/gi, "")
           .trim();
 
         console.log(`[ZeroLLM ToolCalls] Detected ${toolCalls.length} tool calls in response:`, toolCalls);

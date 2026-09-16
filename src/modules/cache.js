@@ -43,13 +43,17 @@ const WATCHED_PREFIXES = [
   "action",
   "call",
   "function",
-  "invoke"
+  "invoke",
+  "dsml",
+  "|",
+  "｜"
 ];
 
 function isPotentialWatchedTag(tagStr) {
   if (!tagStr || !tagStr.startsWith("<")) return false;
   const namePart = tagStr.replace(/^<\/?/, "").toLowerCase();
   if (!namePart) return true; // just '<' or '</'
+  if (/^[|｜\s]*dsml/i.test(namePart) || /^[|｜]/.test(namePart)) return true;
   return WATCHED_PREFIXES.some(p => p.startsWith(namePart) || namePart.startsWith(p));
 }
 
@@ -69,7 +73,7 @@ export function processStreamDelta(requestId, deltaContent, isToolCallChecker) {
 
   while (buffer.length > 0) {
     // 1. Cari kemunculan tag lengkap yang kita awasi:
-    const tagRegex = /<\/?(?:zerollm[_\w:]*|tool_call|action|call|function|invoke)\b[^>]*>/i;
+    const tagRegex = /<\/?(?:zerollm[_\w:]*|tool_call|action|call|function|invoke|[|｜\s]*dsml[|｜\s]*\w*)\b[^>]*>/i;
     const match = buffer.match(tagRegex);
 
     if (match) {
@@ -110,9 +114,24 @@ export function processStreamDelta(requestId, deltaContent, isToolCallChecker) {
         continue;
       }
 
-      // Kasus D: Tag pembuka blok yang harus ditekan (tool call, available tools, system, thought, dll.)
-      // Cari tag penutup yang cocok untuk mengonsumsi seluruh blok
-      const closeRegex = /<\/(?:zerollm[_\w:]*|tool_call|action|call|function|invoke)>/i;
+      // Kasus D: Tag pembuka blok yang harus ditekan (tool call, available tools, system, thought, dsml, dll.)
+      // Cari tag penutup yang cocok untuk mengonsumsi seluruh blok (utamakan tag penutup yang sepadan)
+      let closeRegex;
+      const rawTagName = matchedTag.replace(/^<\/?/, "").replace(/>$/, "").trim();
+      if (/^[|｜\s]*dsml[|｜\s]*calls/i.test(rawTagName)) {
+        closeRegex = /<\/[|｜\s]*dsml[|｜\s]*calls>/i;
+      } else if (/^[|｜\s]*dsml[|｜\s]*invoke/i.test(rawTagName)) {
+        closeRegex = /<\/[|｜\s]*dsml[|｜\s]*invoke>/i;
+      } else if (/^zerollm_tool_call/i.test(rawTagName)) {
+        closeRegex = /<\/zerollm_tool_call>/i;
+      } else if (/^zerollm_available_tools/i.test(rawTagName)) {
+        closeRegex = /<\/zerollm_available_tools>/i;
+      } else if (/^tool_call/i.test(rawTagName)) {
+        closeRegex = /<\/tool_call>/i;
+      } else {
+        closeRegex = /<\/(?:zerollm[_\w:]*|tool_call|action|call|function|invoke|[|｜\s]*dsml[|｜\s]*\w*)>/i;
+      }
+
       const closeMatch = buffer.match(closeRegex);
 
       if (!closeMatch) {
@@ -130,7 +149,7 @@ export function processStreamDelta(requestId, deltaContent, isToolCallChecker) {
 
     // 2. Jika tidak ada tag lengkap dengan '>', periksa apakah di AKHIR buffer
     // terdapat tag yang belum selesai ditutup (misal: "<zerollm_tool_call name=" atau "</zerollm_tool_call" atau "<" atau "</z")
-    const unclosedTagMatch = buffer.match(/<\/?(?:zerollm[_\w:]*|tool_call|action|call|function|invoke)\b[^>]*$/i);
+    const unclosedTagMatch = buffer.match(/<\/?(?:zerollm[_\w:]*|tool_call|action|call|function|invoke|[|｜\s]*dsml[|｜\s]*\w*)\b[^>]*$/i);
     if (unclosedTagMatch) {
       const safeText = buffer.slice(0, unclosedTagMatch.index);
       outToStream += safeText;
@@ -138,7 +157,7 @@ export function processStreamDelta(requestId, deltaContent, isToolCallChecker) {
       break;
     }
 
-    const partialPrefixMatch = buffer.match(/<\/?([a-zA-Z0-9_:*-]*)$/);
+    const partialPrefixMatch = buffer.match(/<\/?([a-zA-Z0-9_:*|｜-]*)$/);
     if (partialPrefixMatch && isPotentialWatchedTag(partialPrefixMatch[0])) {
       // Ada potongan tag potensial di ujung buffer:
       // Keluarkan teks aman sebelum tanda '<' dan tahan potongan tag di pool (buffer)
@@ -166,8 +185,8 @@ export function flushStreamBuffer(requestId) {
   const remaining = streamBuffers.get(requestId) || "";
   streamBuffers.delete(requestId);
   if (!remaining) return "";
-  // Buang jika berupa tag zerollm atau tool call yang belum tertutup
-  if (/^<\/?(?:zerollm[_\w:]*|tool_call|action|call|function|invoke)\b/i.test(remaining)) {
+  // Buang jika berupa tag zerollm atau tool call atau DSML yang belum tertutup
+  if (/^<\/?(?:zerollm[_\w:]*|tool_call|action|call|function|invoke|[|｜\s]*dsml)\b/i.test(remaining)) {
     return "";
   }
   return remaining;

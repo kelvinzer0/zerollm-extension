@@ -158,14 +158,107 @@ export function safeParseJsonArgs(argsStr, fnName) {
   return JSON.stringify({ input: argsStr.trim() });
 }
 
+/**
+ * Parse DeepSeek native DSML (DeepSeek Markup Language) function call invokes
+ * Format:
+ * <｜｜DSML｜｜ calls>
+ * <｜｜DSML｜｜ invoke name="bash">
+ * <｜｜DSML｜｜ parameter name="command" string="true">...code...</｜｜DSML｜｜ parameter>
+ * <｜｜DSML｜｜ parameter name="timeout" string="false">15000</｜｜DSML｜｜ parameter>
+ * </｜｜DSML｜｜ invoke>
+ * </｜｜DSML｜｜ calls>
+ */
+export function parseDsmlInvokes(text) {
+  if (!text || typeof text !== "string") return [];
+
+  const invokeRegex = /<[\|｜\s]*DSML[\|｜\s]*invoke\b([^>]*)>([\s\S]*?)<\/[\|｜\s]*DSML[\|｜\s]*invoke>/gi;
+  const results = [];
+  let match;
+
+  while ((match = invokeRegex.exec(text)) !== null) {
+    const attrs = match[1];
+    const body = match[2];
+    const nameMatch = attrs.match(/name=["\x27]?([^"\x27\s>]+)["\x27]?/i);
+    let fnName = nameMatch ? nameMatch[1] : "tool";
+    if (fnName === "sh" || fnName === "shell" || fnName === "zsh") {
+      fnName = "bash";
+    }
+
+    const paramRegex = /<[\|｜\s]*DSML[\|｜\s]*parameter\b([^>]*)>([\s\S]*?)<\/[\|｜\s]*DSML[\|｜\s]*parameter>/gi;
+    const args = {};
+    let pMatch;
+
+    while ((pMatch = paramRegex.exec(body)) !== null) {
+      const pAttrs = pMatch[1];
+      let pVal = pMatch[2].trim();
+      const pNameMatch = pAttrs.match(/name=["\x27]?([^"\x27\s>]+)["\x27]?/i);
+      const isString = /string=["\x27]?true["\x27]?/i.test(pAttrs);
+      const isExplicitNonString = /string=["\x27]?false["\x27]?/i.test(pAttrs);
+
+      if (pNameMatch) {
+        const paramName = pNameMatch[1];
+        if (isString) {
+          args[paramName] = pVal;
+        } else if (isExplicitNonString) {
+          try {
+            args[paramName] = JSON.parse(pVal);
+          } catch (_) {
+            const num = Number(pVal);
+            args[paramName] = !isNaN(num) && pVal !== "" ? num : pVal;
+          }
+        } else {
+          try {
+            args[paramName] = JSON.parse(pVal);
+          } catch (_) {
+            args[paramName] = pVal;
+          }
+        }
+      }
+    }
+
+    results.push({ name: fnName, arguments: args });
+  }
+
+  return results;
+}
+
+/**
+ * Repack DeepSeek native DSML tool call tags into standard <zerollm_tool_call> tags
+ */
+export function repackDsmlToZeroLlm(text) {
+  if (!text || typeof text !== "string") return text;
+
+  // 1. Repack full container: <｜｜DSML｜｜ calls> ... </｜｜DSML｜｜ calls>
+  const callsContainerRegex = /<[\|｜\s]*DSML[\|｜\s]*calls\b[^>]*>([\s\S]*?)<\/[\|｜\s]*DSML[\|｜\s]*calls>/gi;
+  let repacked = text.replace(callsContainerRegex, (match) => {
+    const invokes = parseDsmlInvokes(match);
+    if (invokes.length === 0) return "";
+    return invokes.map(inv => `<zerollm_tool_call name="${inv.name}">${JSON.stringify(inv.arguments)}</zerollm_tool_call>`).join("\n");
+  });
+
+  // 2. Repack standalone invoke without calls container
+  const standaloneInvokeRegex = /<[\|｜\s]*DSML[\|｜\s]*invoke\b[^>]*>[\s\S]*?<\/[\|｜\s]*DSML[\|｜\s]*invoke>/gi;
+  repacked = repacked.replace(standaloneInvokeRegex, (match) => {
+    const invokes = parseDsmlInvokes(match);
+    if (invokes.length === 0) return "";
+    return invokes.map(inv => `<zerollm_tool_call name="${inv.name}">${JSON.stringify(inv.arguments)}</zerollm_tool_call>`).join("\n");
+  });
+
+  return repacked;
+}
+
 export function parseToolCalls(text) {
   if (!text || typeof text !== "string") return null;
+
+  // Repack DeepSeek DSML tags to standard ZeroLLM tool calls if present
+  text = repackDsmlToZeroLlm(text);
 
   const calls = [];
 
   // Pola 1 (Utama ZeroLLM): <zerollm_tool_call name="...">...</zerollm_tool_call> atau <zerollm_call name="...">
   const tagRegex = /<(?:zerollm_tool_call|zerollm_call|zerollm:call|action|call|zerollm_code)[^>]*?(?:name|lang)=["\x27]?([\w_-]+)["\x27]?[^>]*>([\s\S]*?)<\/(?:zerollm_tool_call|zerollm_call|zerollm:call|action|call)>/gi;
   let match;
+
   while ((match = tagRegex.exec(text)) !== null) {
     let fnName = match[1];
     if (fnName === "sh" || fnName === "shell" || fnName === "zsh") {
@@ -704,6 +797,8 @@ export function stripZeroLlmTags(content) {
   if (!content || typeof content !== "string") return content;
   return content
     .replace(/<zerollm_available_tools>[\s\S]*?<\/zerollm_available_tools>/gi, "")
+    .replace(/<[\|｜\s]*DSML[\|｜\s]*calls\b[^>]*>[\s\S]*?<\/[\|｜\s]*DSML[\|｜\s]*calls>/gi, "")
+    .replace(/<[\|｜\s]*DSML[\|｜\s]*invoke\b[^>]*>[\s\S]*?<\/[\|｜\s]*DSML[\|｜\s]*invoke>/gi, "")
     .replace(/^<zerollm_assistant>\s*/i, "")
     .replace(/\s*<\/zerollm_assistant>$/i, "")
     .trim();
@@ -738,6 +833,15 @@ export function hasUnclosedToolTag(text) {
     if (openCount > closeCount) {
       return true;
     }
+  }
+
+  // DeepSeek DSML tags check
+  const dsmlOpen = /<[\|｜\s]*DSML[\|｜\s]*(?:calls|invoke|parameter)\b[^>]*>/gi;
+  const dsmlClose = /<\/[\|｜\s]*DSML[\|｜\s]*(?:calls|invoke|parameter)>/gi;
+  const dsmlOpenCount = (text.match(dsmlOpen) || []).length;
+  const dsmlCloseCount = (text.match(dsmlClose) || []).length;
+  if (dsmlOpenCount > dsmlCloseCount) {
+    return true;
   }
 
   return false;
@@ -778,6 +882,21 @@ export function autoCloseToolTagsIfNeeded(text) {
     }
   }
 
+  // Auto-close DSML tags if truncated (in inner-to-outer order: parameter -> invoke -> calls)
+  const dsmlTags = ["parameter", "invoke", "calls"];
+  for (const sub of dsmlTags) {
+    const openRegex = new RegExp(`<[\\|｜\\s]*DSML[\\|｜\\s]*${sub}\\b[^>]*>`, "gi");
+    const closeRegex = new RegExp(`<\/[\\|｜\\s]*DSML[\\|｜\\s]*${sub}>`, "gi");
+    const oCount = (repaired.match(openRegex) || []).length;
+    const cCount = (repaired.match(closeRegex) || []).length;
+    if (oCount > cCount) {
+      for (let i = 0; i < oCount - cCount; i++) {
+        repaired += `</｜｜DSML｜｜ ${sub}>`;
+      }
+    }
+  }
+
   return repaired;
 }
+
 

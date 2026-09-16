@@ -7,7 +7,9 @@ import {
   formatToolResultToXml,
   stripZeroLlmTags,
   hasUnclosedToolTag,
-  autoCloseToolTagsIfNeeded
+  autoCloseToolTagsIfNeeded,
+  parseDsmlInvokes,
+  repackDsmlToZeroLlm
 } from "../src/modules/tools.js";
 
 test("safeParseJsonArgs parses valid and slightly malformed JSON", () => {
@@ -128,3 +130,71 @@ test("autoCloseToolTagsIfNeeded repairs truncated tool calls to allow JSON parsi
   assert.equal(calls[0].function.name, "write");
   assert.equal(JSON.parse(calls[0].function.arguments).filePath, "/tmp/test.js");
 });
+
+test("parseDsmlInvokes and repackDsmlToZeroLlm handle DeepSeek DSML toolcall format", () => {
+  const dsml = `<｜｜DSML｜｜ calls>
+<｜｜DSML｜｜ invoke name="bash">
+<｜｜DSML｜｜ parameter name="command" string="true">ps aux | grep -i vite | grep -v grep; echo '---LOG---'; cat /tmp/vite-dev.log 2>/dev/null | tail -30</｜｜DSML｜｜ parameter>
+<｜｜DSML｜｜ parameter name="timeout" string="false">15000</｜｜DSML｜｜ parameter>
+</｜｜DSML｜｜ invoke>
+</｜｜DSML｜｜ calls>`;
+
+  // 1. Test parseDsmlInvokes
+  const invokes = parseDsmlInvokes(dsml);
+  assert.equal(invokes.length, 1);
+  assert.equal(invokes[0].name, "bash");
+  assert.equal(invokes[0].arguments.command, "ps aux | grep -i vite | grep -v grep; echo '---LOG---'; cat /tmp/vite-dev.log 2>/dev/null | tail -30");
+  assert.equal(invokes[0].arguments.timeout, 15000);
+
+  // 2. Test repackDsmlToZeroLlm
+  const repacked = repackDsmlToZeroLlm(dsml);
+  assert.ok(repacked.includes('<zerollm_tool_call name="bash">'));
+  assert.ok(repacked.includes('"timeout":15000'));
+  assert.ok(repacked.includes("</zerollm_tool_call>"));
+  assert.ok(!repacked.includes("<｜｜DSML｜｜"));
+
+  // 3. Test parseToolCalls directly on DSML input
+  const toolCalls = parseToolCalls(dsml);
+  assert.ok(toolCalls);
+  assert.equal(toolCalls.length, 1);
+  assert.equal(toolCalls[0].function.name, "bash");
+  const parsedArgs = JSON.parse(toolCalls[0].function.arguments);
+  assert.equal(parsedArgs.command, "ps aux | grep -i vite | grep -v grep; echo '---LOG---'; cat /tmp/vite-dev.log 2>/dev/null | tail -30");
+  assert.equal(parsedArgs.timeout, 15000);
+});
+
+test("repackDsmlToZeroLlm handles multiple invokes and ascii pipes", () => {
+  const multi = `<||DSML|| calls>
+<||DSML|| invoke name="read_file">
+<||DSML|| parameter name="path" string="true">/app/server.js</||DSML|| parameter>
+</||DSML|| invoke>
+<||DSML|| invoke name="bash">
+<||DSML|| parameter name="command" string="true">node /app/server.js</||DSML|| parameter>
+<||DSML|| parameter name="timeout" string="false">3000</||DSML|| parameter>
+</||DSML|| invoke>
+</||DSML|| calls>`;
+
+  const repacked = repackDsmlToZeroLlm(multi);
+  assert.ok(repacked.includes('<zerollm_tool_call name="read_file">{"path":"/app/server.js"}</zerollm_tool_call>'));
+  assert.ok(repacked.includes('<zerollm_tool_call name="bash">{"command":"node /app/server.js","timeout":3000}</zerollm_tool_call>'));
+
+  const calls = parseToolCalls(multi);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].function.name, "read_file");
+  assert.equal(calls[1].function.name, "bash");
+});
+
+test("hasUnclosedToolTag and autoCloseToolTagsIfNeeded support DSML tags", () => {
+  const unclosed = `<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="bash">\n<｜｜DSML｜｜ parameter name="command" string="true">uname -a`;
+  assert.equal(hasUnclosedToolTag(unclosed), true);
+
+  const closed = autoCloseToolTagsIfNeeded(unclosed);
+  assert.equal(hasUnclosedToolTag(closed), false);
+
+  const calls = parseToolCalls(closed);
+  assert.ok(calls);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].function.name, "bash");
+  assert.equal(JSON.parse(calls[0].function.arguments).command, "uname -a");
+});
+
