@@ -78,13 +78,13 @@ export const DEFAULT_PRESETS = [
     defaultUrl: "https://gemini.google.com/app",
     newChatUrl: "https://gemini.google.com/app",
     urlPattern: "*://gemini.google.com/*",
-    responseScope: "main, [class*='conversation-container'], [class*='chat-history'], [role='main']",
+    responseScope: "chat-history, [class*='chat-history'], .chat-container, main, [role='main']",
     newChatSelector: "[aria-label*='New chat'], [aria-label*='Percakapan baru'], [aria-label*='发起新对话'], a[href='/app']",
     startChatSelector: ".ql-editor, div[contenteditable='true'], textarea[aria-label*='prompt'], rich-textarea textarea, textarea[placeholder*='Gemini']",
     continueChatSelector: ".ql-editor, div[contenteditable='true'], textarea[aria-label*='prompt'], rich-textarea textarea, textarea[placeholder*='Gemini']",
     streamSelector: "button[aria-label*='Stop'], button[aria-label*='Berhenti'], button[aria-label*='停止'], .sparkle-animation, [aria-label*='Stop generating']",
     doneSelector: "button[aria-label*='Send message']:not([disabled]), button[aria-label*='Kirim pesan']:not([disabled]), button[aria-label*='发送消息']:not([disabled]), message-content",
-    resultContainerSelector: "message-content, .model-response-text, .response-container-content, model-response, .response-paragraph",
+    resultContainerSelector: "message-content, .model-response-text, model-response, .response-paragraph",
     description: "Google Gemini Web Interface (Gemini 1.5 Pro & Flash)"
   },
   {

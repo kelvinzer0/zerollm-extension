@@ -195,10 +195,10 @@ function isValidResponseElement(el) {
   if (["textarea", "input", "form", "script", "style", "head", "button", "nav", "header", "footer"].includes(tag)) return false;
 
   // Tolak jika elemen berada di dalam composer/input/editor/footer/sidebar/history
-  if (el.closest("form, #prompt-textarea, [contenteditable='true'], [role='textbox'], .composer, footer, header, nav, aside, [class*='sidebar'], [class*='footer'], [class*='disclaimer'], [class*='history'], [class*='navigation'], [class*='menu']")) return false;
+  if (el.closest("form, #prompt-textarea, [contenteditable='true'], [role='textbox'], .composer, input-container, hallucination-disclaimer, [class*='input-container'], [class*='hallucination'], footer, header, nav, aside, [class*='sidebar'], [class*='footer'], [class*='disclaimer'], [class*='history'], [class*='navigation'], [class*='menu']")) return false;
 
   // Tolak elemen footer/disclaimer berdasarkan selector
-  if (el.matches("footer, [class*='disclaimer'], [class*='footer'], [class*='bottom-bar'], [class*='legal'], [class*='copyright'], [class*='history'], [class*='sidebar']")) return false;
+  if (el.matches("footer, input-container, hallucination-disclaimer, [class*='input-container'], [class*='hallucination'], [class*='disclaimer'], [class*='footer'], [class*='bottom-bar'], [class*='legal'], [class*='copyright'], [class*='history'], [class*='sidebar']")) return false;
 
   // Tolak jika elemen merupakan kontainer proses berpikir / toolcall
   if (
