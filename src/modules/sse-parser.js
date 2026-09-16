@@ -16,12 +16,17 @@ export function isAiStreamUrl(url) {
     // Qwen
     /\/api\/v\d+\/chat\/completions/i,
     // Perplexity
+    /\/rest\/sse\/perplexity_ask/i,
     /\/rest\/threads\/[^/]+\/followup/i,
+    /\/rest\/sse\//i,
     // Grok
     /\/rest\/app-chat\/conversations\/[^/]+\/responses/i,
-    // Doubao & Kimi
+    // Dola AI / Doubao (/chat/completion, /api/chat, /ChatService/Chat)
+    /\/chat\/completion/i,
     /\/api\/chat/i,
     /\/ChatService\/Chat/i,
+    // ChatGLM / Zhipu AI
+    /\/chatglm\/(?:mainchat|backend|chat)-api\//i,
     // General heuristic
     /(?:conversation|completions|chat_stream|chat\/stream)/i
   ];
@@ -32,11 +37,19 @@ export function isStreamCompleted(payload, parsed, currentEvent = "") {
   if (payload === "[DONE]") return true;
 
   const ev = (currentEvent || "").toLowerCase();
-  if (ev === "finish" || ev === "close" || ev === "message_stop" || ev === "done") {
+  if (ev === "finish" || ev === "close" || ev === "message_stop" || ev === "done" || ev === "end_of_stream" || ev === "sse_reply_end") {
     return true;
   }
 
   if (parsed && typeof parsed === "object") {
+    // Perplexity
+    if (parsed.final_sse_message === true || parsed.final === true) return true;
+    if (parsed.text_completed === true && parsed.status === "COMPLETED") return true;
+
+    // Dola / Doubao
+    if (parsed.end_type !== undefined) return true;
+    if (parsed.is_finish === true || parsed.is_finish === "1") return true;
+
     // Xiaomi MiMo
     if (parsed.content === "[DONE]") return true;
 
@@ -178,7 +191,69 @@ export function extractTextFromSseJson(dataObj, state = { lastText: "" }) {
     return { delta, full };
   }
 
-  // 8. Generic text / content field
+  // 8. Dola AI / Doubao format
+  // STREAM_MSG_NOTIFY initial text
+  if (dataObj.content?.content_block && Array.isArray(dataObj.content.content_block)) {
+    const text = dataObj.content.content_block[0]?.content?.text_block?.text;
+    if (typeof text === "string" && text) {
+      state.lastText = text;
+      return { delta: text, full: state.lastText };
+    }
+  }
+  // STREAM_CHUNK incremental patch
+  if (dataObj.patch_op && Array.isArray(dataObj.patch_op)) {
+    let dolaDelta = "";
+    for (const op of dataObj.patch_op) {
+      const tb = op.patch_value?.content_block?.[0]?.content?.text_block;
+      if (tb && typeof tb.text === "string" && tb.text) {
+        dolaDelta += tb.text;
+      }
+    }
+    if (dolaDelta) {
+      state.lastText += dolaDelta;
+      return { delta: dolaDelta, full: state.lastText };
+    }
+  }
+
+  // 9. Perplexity format (diff_block patches or workflow_block)
+  if (dataObj.blocks && Array.isArray(dataObj.blocks)) {
+    for (const block of dataObj.blocks) {
+      // Diff block incremental chunks
+      if (block.diff_block?.patches && Array.isArray(block.diff_block.patches)) {
+        for (const patch of block.diff_block.patches) {
+          if (patch.path && typeof patch.path === "string" && patch.path.includes("chunks") && typeof patch.value === "string") {
+            const delta = patch.value;
+            state.lastText += delta;
+            return { delta, full: state.lastText };
+          }
+          if (patch.path && typeof patch.path === "string" && patch.path.includes("text") && typeof patch.value === "string") {
+            const full = patch.value;
+            const delta = full.startsWith(state.lastText) ? full.slice(state.lastText.length) : (full === state.lastText ? "" : full);
+            state.lastText = full;
+            return { delta, full };
+          }
+          if (patch.value?.steps?.[0]?.items?.[0]?.payload?.text_payload) {
+            const tp = patch.value.steps[0].items[0].payload.text_payload;
+            if (Array.isArray(tp.chunks) && tp.chunks.length > 0) {
+              const full = tp.chunks.join("");
+              const delta = full.startsWith(state.lastText) ? full.slice(state.lastText.length) : (full === state.lastText ? "" : full);
+              state.lastText = full;
+              return { delta, full };
+            }
+          }
+        }
+      }
+      // Workflow block final or full text
+      if (block.workflow_block?.steps?.[0]?.items?.[0]?.payload?.text_payload?.text) {
+        const full = block.workflow_block.steps[0].items[0].payload.text_payload.text;
+        const delta = full.startsWith(state.lastText) ? full.slice(state.lastText.length) : (full === state.lastText ? "" : full);
+        state.lastText = full;
+        return { delta, full };
+      }
+    }
+  }
+
+  // 10. Generic text / content field
   if (typeof dataObj.text === "string") {
     const delta = dataObj.text;
     state.lastText += delta;

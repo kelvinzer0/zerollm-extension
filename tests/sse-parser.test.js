@@ -11,8 +11,11 @@ test("isAiStreamUrl correctly identifies AI stream endpoints", () => {
   assert.equal(isAiStreamUrl("https://chat.deepseek.com/api/v0/chat/completion"), true);
   assert.equal(isAiStreamUrl("https://aistudio.xiaomimimo.com/open-apis/bot/chat?xiaomichatbot_ph=abc"), true);
   assert.equal(isAiStreamUrl("https://www.perplexity.ai/rest/threads/abc/followup"), true);
+  assert.equal(isAiStreamUrl("https://www.perplexity.ai/rest/sse/perplexity_ask"), true);
   assert.equal(isAiStreamUrl("https://grok.com/rest/app-chat/conversations/xyz/responses"), true);
   assert.equal(isAiStreamUrl("https://api.kimi.com/ChatService/Chat"), true);
+  assert.equal(isAiStreamUrl("https://www.dola.com/chat/completion?aid=495671"), true);
+  assert.equal(isAiStreamUrl("https://chatglm.cn/chatglm/mainchat-api/conversation/stream"), true);
 
   // Non-AI regular URLs
   assert.equal(isAiStreamUrl("https://google.com/search?q=test"), false);
@@ -113,6 +116,16 @@ test("isStreamCompleted detects completion signals across all platforms", () => 
     v: [{ p: "/message/status", o: "replace", v: "finished_successfully" }]
   }), true);
 
+  // 6. Perplexity
+  assert.equal(isStreamCompleted("", null, "end_of_stream"), true);
+  assert.equal(isStreamCompleted("", { final_sse_message: true }), true);
+  assert.equal(isStreamCompleted("", { text_completed: true, status: "COMPLETED" }), true);
+
+  // 7. Dola AI / Doubao
+  assert.equal(isStreamCompleted("", null, "sse_reply_end"), true);
+  assert.equal(isStreamCompleted("", { end_type: 1 }), true);
+  assert.equal(isStreamCompleted("", { is_finish: true }), true);
+
   // Ongoing non-final chunk
   assert.equal(isStreamCompleted('{"v":"halo"}', { v: "halo" }, "message"), false);
 });
@@ -172,3 +185,66 @@ test("extractTextFromSseJson handles Qwen output text", () => {
   assert.equal(res2.delta, " Plus");
   assert.equal(res2.full, "Qwen Plus");
 });
+
+test("extractTextFromSseJson handles Dola AI / Doubao STREAM_MSG_NOTIFY and STREAM_CHUNK", () => {
+  const state = { lastText: "" };
+
+  // Initial message notify
+  const notifyChunk = {
+    content: {
+      content_block: [{
+        content: { text_block: { text: "Halo" } }
+      }]
+    }
+  };
+  const res1 = extractTextFromSseJson(notifyChunk, state);
+  assert.equal(res1.delta, "Halo");
+  assert.equal(res1.full, "Halo");
+
+  // Incremental patch chunk
+  const patchChunk = {
+    patch_op: [{
+      patch_value: {
+        content_block: [{
+          content: { text_block: { text: " dari Dola!" } }
+        }]
+      }
+    }]
+  };
+  const res2 = extractTextFromSseJson(patchChunk, state);
+  assert.equal(res2.delta, " dari Dola!");
+  assert.equal(res2.full, "Halo dari Dola!");
+});
+
+test("extractTextFromSseJson handles Perplexity diff_block patches and workflow_block", () => {
+  const state = { lastText: "" };
+
+  // Incremental chunk
+  const chunk1 = {
+    blocks: [{
+      diff_block: {
+        patches: [
+          { path: "/steps/0/items/0/payload/text_payload/chunks/0", value: "Halo Perplexity" }
+        ]
+      }
+    }]
+  };
+  const res1 = extractTextFromSseJson(chunk1, state);
+  assert.equal(res1.delta, "Halo Perplexity");
+  assert.equal(res1.full, "Halo Perplexity");
+
+  // Cumulative text replacement
+  const chunk2 = {
+    blocks: [{
+      diff_block: {
+        patches: [
+          { path: "/steps/0/items/0/payload/text_payload/text", value: "Halo Perplexity AI!" }
+        ]
+      }
+    }]
+  };
+  const res2 = extractTextFromSseJson(chunk2, state);
+  assert.equal(res2.delta, " AI!");
+  assert.equal(res2.full, "Halo Perplexity AI!");
+});
+
