@@ -37,10 +37,29 @@ export function saveToCache(modelId, query, result) {
   }
 }
 
+const WATCHED_PREFIXES = [
+  "zerollm",
+  "tool_call",
+  "action",
+  "call",
+  "function",
+  "invoke"
+];
+
+function isPotentialWatchedTag(tagStr) {
+  if (!tagStr || !tagStr.startsWith("<")) return false;
+  const namePart = tagStr.replace(/^<\/?/, "").toLowerCase();
+  if (!namePart) return true; // just '<' or '</'
+  return WATCHED_PREFIXES.some(p => p.startsWith(namePart) || namePart.startsWith(p));
+}
+
 /**
- * Memproses stream delta dengan buffering cerdas untuk tag <zerollm* dan pemanggilan tool.
- * Jika teks sedang menulis tag pembuka <zerollm* atau tag tool eksternal yang belum selesai,
- * tahan (buffer) potongan tersebut dan JANGAN distreaming ke klien sampai tag penutupnya tiba.
+ * Memproses stream delta dengan buffering / pooling cerdas untuk tag <zerollm* dan pemanggilan tool.
+ * Jika teks sedang menulis tag pembuka <zerollm*, tag penutup </zerollm*, atau tag tool eksternal yang belum selesai:
+ * Tahan (pool) potongan tersebut dan JANGAN distreaming ke klien sampai tag tersebut lengkap dan jelas.
+ * - Tag tool call dan metadata (<zerollm_tool_call>...</zerollm_tool_call>, <tool_call>, dll.) ditekan 100% dari stream teks.
+ * - Tag penutup stray (seperti </zerollm_tool_call>) dibuang bersih.
+ * - Tag <zerollm_code> dinormalisasi menjadi blok kode markdown bersih ```.
  */
 export function processStreamDelta(requestId, deltaContent, isToolCallChecker) {
   if (!deltaContent || typeof deltaContent !== "string") return null;
@@ -49,57 +68,90 @@ export function processStreamDelta(requestId, deltaContent, isToolCallChecker) {
   let outToStream = "";
 
   while (buffer.length > 0) {
-    const tagMatch = buffer.match(/<(?:zerollm[_\w:]*|tool_call|action|call|function|invoke)\b/i);
+    // 1. Cari kemunculan tag lengkap yang kita awasi:
+    const tagRegex = /<\/?(?:zerollm[_\w:]*|tool_call|action|call|function|invoke)\b[^>]*>/i;
+    const match = buffer.match(tagRegex);
 
-    if (!tagMatch) {
-      const partialTagMatch = buffer.match(/<[a-zA-Z0-9_:*-]*$/);
-      const isPotentialToolTag = partialTagMatch && [
-        "zerollm",
-        "tool_call",
-        "action",
-        "call",
-        "function",
-        "invoke"
-      ].some(prefix => prefix.startsWith(partialTagMatch[0].slice(1).toLowerCase()));
+    if (match) {
+      const tagStartIndex = match.index;
+      const matchedTag = match[0];
 
-      if (isPotentialToolTag) {
-        const safeText = buffer.slice(0, partialTagMatch.index);
-        outToStream += safeText;
-        buffer = buffer.slice(partialTagMatch.index);
-        break;
-      } else {
-        outToStream += buffer;
-        buffer = "";
+      // Jika ada teks biasa sebelum tag, keluarkan teks tersebut ke stream
+      if (tagStartIndex > 0) {
+        outToStream += buffer.slice(0, tagStartIndex);
+        buffer = buffer.slice(tagStartIndex);
+      }
+
+      // buffer sekarang diawali dengan matchedTag:
+      // Kasus A: Tag kode <zerollm_code>
+      const codeOpen = matchedTag.match(/^<zerollm_code(?:[\s]+lang=["']?([a-zA-Z0-9_-]*)["']?)?[^>]*>/i);
+      if (codeOpen) {
+        const lang = codeOpen[1] || "";
+        buffer = buffer.slice(matchedTag.length);
+        outToStream += lang ? `\n\`\`\`${lang}\n` : "\n```\n";
+        continue;
+      }
+      if (/^<\/zerollm_code>/i.test(matchedTag)) {
+        buffer = buffer.slice(matchedTag.length);
+        outToStream += "\n```\n";
+        continue;
+      }
+
+      // Kasus B: Tag assistant wrapper <zerollm_assistant> atau </zerollm_assistant>
+      if (/^<\/?zerollm_assistant>/i.test(matchedTag)) {
+        buffer = buffer.slice(matchedTag.length);
+        continue;
+      }
+
+      // Kasus C: Tag penutup stray (misal: </zerollm_tool_call>, </tool_call>, </action>, dll.)
+      if (/^<\//.test(matchedTag)) {
+        buffer = buffer.slice(matchedTag.length);
+        console.log(`[ZeroLLM StreamBuffer] 🛡️ Suppressed stray closing tag from stream (${matchedTag})`);
+        continue;
+      }
+
+      // Kasus D: Tag pembuka blok yang harus ditekan (tool call, available tools, system, thought, dll.)
+      // Cari tag penutup yang cocok untuk mengonsumsi seluruh blok
+      const closeRegex = /<\/(?:zerollm[_\w:]*|tool_call|action|call|function|invoke)>/i;
+      const closeMatch = buffer.match(closeRegex);
+
+      if (!closeMatch) {
+        // Tag penutup belum tiba, tahan seluruh blok di pool!
         break;
       }
+
+      const blockEndIndex = closeMatch.index + closeMatch[0].length;
+      const completeBlock = buffer.slice(0, blockEndIndex);
+      buffer = buffer.slice(blockEndIndex);
+
+      console.log(`[ZeroLLM StreamBuffer] 🛡️ Suppressed complete tool/zerollm tag block (${completeBlock.length} chars)`);
+      continue;
     }
 
-    const tagStartIndex = tagMatch.index;
-
-    if (tagStartIndex > 0) {
-      outToStream += buffer.slice(0, tagStartIndex);
-      buffer = buffer.slice(tagStartIndex);
-    }
-
-    const closeMatch = buffer.match(/<\/(?:zerollm[_\w:]*|tool_call|action|call|function|invoke)>/i);
-
-    if (!closeMatch) {
+    // 2. Jika tidak ada tag lengkap dengan '>', periksa apakah di AKHIR buffer
+    // terdapat tag yang belum selesai ditutup (misal: "<zerollm_tool_call name=" atau "</zerollm_tool_call" atau "<" atau "</z")
+    const unclosedTagMatch = buffer.match(/<\/?(?:zerollm[_\w:]*|tool_call|action|call|function|invoke)\b[^>]*$/i);
+    if (unclosedTagMatch) {
+      const safeText = buffer.slice(0, unclosedTagMatch.index);
+      outToStream += safeText;
+      buffer = buffer.slice(unclosedTagMatch.index);
       break;
     }
 
-    const tagEndIndex = closeMatch.index + closeMatch[0].length;
-    const completeTagBlock = buffer.slice(0, tagEndIndex);
-    buffer = buffer.slice(tagEndIndex);
-
-    const isToolCallBlock = (typeof isToolCallChecker === "function" && isToolCallChecker(completeTagBlock)) ||
-                            /<(?:zerollm_tool_call|zerollm_call|action|call|tool_call)\b/i.test(completeTagBlock) ||
-                            /<\/(?:zerollm_tool_call|zerollm_call|action|call|tool_call)>/i.test(completeTagBlock);
-
-    if (isToolCallBlock) {
-      console.log(`[ZeroLLM StreamBuffer] 🛡️ Suppressed tool call tag from text stream (${completeTagBlock.length} chars)`);
-    } else {
-      outToStream += completeTagBlock;
+    const partialPrefixMatch = buffer.match(/<\/?([a-zA-Z0-9_:*-]*)$/);
+    if (partialPrefixMatch && isPotentialWatchedTag(partialPrefixMatch[0])) {
+      // Ada potongan tag potensial di ujung buffer:
+      // Keluarkan teks aman sebelum tanda '<' dan tahan potongan tag di pool (buffer)
+      const safeText = buffer.slice(0, partialPrefixMatch.index);
+      outToStream += safeText;
+      buffer = buffer.slice(partialPrefixMatch.index);
+      break;
     }
+
+    // 3. Seluruh buffer aman (tidak ada tag lengkap dan tidak ada partial tag yang dicurigai)
+    outToStream += buffer;
+    buffer = "";
+    break;
   }
 
   streamBuffers.set(requestId, buffer);
@@ -108,4 +160,15 @@ export function processStreamDelta(requestId, deltaContent, isToolCallChecker) {
 
 export function deleteStreamBuffer(requestId) {
   streamBuffers.delete(requestId);
+}
+
+export function flushStreamBuffer(requestId) {
+  const remaining = streamBuffers.get(requestId) || "";
+  streamBuffers.delete(requestId);
+  if (!remaining) return "";
+  // Buang jika berupa tag zerollm atau tool call yang belum tertutup
+  if (/^<\/?(?:zerollm[_\w:]*|tool_call|action|call|function|invoke)\b/i.test(remaining)) {
+    return "";
+  }
+  return remaining;
 }

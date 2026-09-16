@@ -8,7 +8,8 @@ import {
   getFromCache,
   saveToCache,
   processStreamDelta,
-  deleteStreamBuffer
+  deleteStreamBuffer,
+  flushStreamBuffer
 } from "./modules/cache.js";
 import {
   formatMessagesToPrompt,
@@ -460,7 +461,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
 
     case "response": {
-      deleteStreamBuffer(msg.requestId);
+      const leftover = flushStreamBuffer(msg.requestId);
+      if (leftover) {
+        sendToBridge({
+          type: "stream",
+          requestId: msg.requestId,
+          delta: { content: leftover }
+        });
+      }
       const textToProcess = autoCloseToolTagsIfNeeded(msg.content);
       const cleanContent = stripZeroLlmTags(textToProcess);
       const toolCalls = parseToolCalls(textToProcess);

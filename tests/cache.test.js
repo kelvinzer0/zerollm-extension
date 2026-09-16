@@ -34,3 +34,41 @@ test("processStreamDelta suppresses unclosed tool tags", () => {
   const chunk2 = processStreamDelta(reqId, '"read">{}</zerollm_tool_call> and goodbye!');
   assert.equal(chunk2, " and goodbye!");
 });
+
+test("processStreamDelta pools initial < and </ until tag is identified", () => {
+  const reqId = "test_req_2";
+  deleteStreamBuffer(reqId);
+
+  // Chunk 1: ends with bare '<'
+  const c1 = processStreamDelta(reqId, "Beginning <");
+  assert.equal(c1, "Beginning ");
+
+  // Chunk 2: appends '/zerollm_'
+  const c2 = processStreamDelta(reqId, "/zerollm_");
+  assert.equal(c2, null);
+
+  // Chunk 3: completes stray closing tag '</zerollm_tool_call>'
+  const c3 = processStreamDelta(reqId, "tool_call> and then regular text");
+  assert.equal(c3, " and then regular text");
+});
+
+test("processStreamDelta converts zerollm_code to clean markdown code blocks", () => {
+  const reqId = "test_req_3";
+  deleteStreamBuffer(reqId);
+
+  const c1 = processStreamDelta(reqId, 'Here is code: <zerollm_code lang="python">print("hi")</zerollm_code> done!');
+  assert.ok(c1.includes("```python"));
+  assert.ok(c1.includes('print("hi")'));
+  assert.ok(c1.includes("```"));
+  assert.ok(!c1.includes("<zerollm_code"));
+  assert.ok(!c1.includes("</zerollm_code>"));
+});
+
+test("processStreamDelta preserves normal text with mathematical <", () => {
+  const reqId = "test_req_4";
+  deleteStreamBuffer(reqId);
+
+  const res = processStreamDelta(reqId, "Nilai x < 5 dan y > 2 selesai");
+  assert.equal(res, "Nilai x < 5 dan y > 2 selesai");
+});
+
