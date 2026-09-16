@@ -428,8 +428,10 @@ function cleanResultMarkdown(markdown) {
     .replace(/^(?:Thinking completed|Thinking process|Finished thinking|Merenung)\s*/gim, "")
     // Hapus label header model Xiaomi MiMo ("MiMo-V2.5-Pro", dll) jika ikut terambil
     .replace(/^(?:#+\s*)?(?:MiMo-V[0-9.]+(?:-[a-zA-Z0-9]+)?)\s*\n*/gim, "")
-    // Hapus header timestamp ("sekarang", "hari ini")
-    .replace(/^(?:#+\s*)?(?:sekarang|just now|hari ini|kemarin|today|yesterday)\s*\n+/gim, "")
+    // Hapus header timestamp ("sekarang", "hari ini", "8:28 AM")
+    .replace(/^(?:#+\s*)?(?:sekarang|just now|hari ini|kemarin|today|yesterday|\d{1,2}:\d{2}(?:\s*[AP]M)?)\s*\n*/gim, "")
+    // Hapus banner / footer welcome ChatGLM ("和我聊聊天吧", "内容由AI生成", dll)
+    .replace(/(?:和我聊聊天吧[^\n]*|内容由AI生成[^\n]*|京公网安备[^\n]*|京ICP备[^\n]*|开源模型)\s*/gim, "")
     // Hapus footer status generasi ("Generating", "Generating...", "Sedang membuat...", "Stop generating", dll)
     .replace(/(?:\r?\n|\s)*(?:Generating(?:\.{0,3}|…)?|Sedang membuat(?:\.{0,3}|…)?|Sedang menghasilkan(?:\.{0,3}|…)?|Stop generating|Berhenti membuat|Menggenerasi(?:\.{0,3}|…)?)\s*$/gim, "")
     .replace(/(?:\n+|^)(?:Generating(?:\.{0,3}|…)?|Sedang membuat(?:\.{0,3}|…)?|Sedang menghasilkan(?:\.{0,3}|…)?)\s*(?:\n+|$)/gim, "\n\n")
@@ -450,7 +452,12 @@ function cleanResultMarkdown(markdown) {
     // Hapus tag zerollm_available_tools jika ikut terulang/terecho oleh model
     .replace(/<zerollm_available_tools>[\s\S]*?<\/zerollm_available_tools>/gi, "")
     .replace(/\n{3,}/g, "\n\n");
-  return cleaned.trim();
+
+  const trimmed = cleaned.trim();
+  if (/^\d{1,2}:\d{2}(?:\s*[ap]\.?m\.?)?$/i.test(trimmed)) {
+    return "";
+  }
+  return trimmed;
 }
 
 /**
